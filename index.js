@@ -1,0 +1,178 @@
+const express = require("express");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const morgan = require("morgan");
+const helmet = require("helmet");
+require("dotenv").config();
+
+const { sequelize, connectDB } = require("./config/db");
+require("./models");
+
+const authRoutes = require("./routes/authRoutes");
+const productRoutes = require("./routes/productRoutes");
+const categoryRoutes = require("./routes/categoryRoutes");
+const cartRoutes = require("./routes/cartRoutes");
+const orderRoutes = require("./routes/orderRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+const heroBannerRoutes = require("./routes/heroBannerRoutes");
+const couponRoutes = require("./routes/couponRoutes");
+const testimonialRoutes = require("./routes/testimonialRoutes");
+const cmsRoutes = require("./routes/cmsRoutes");
+const homeRoutes = require("./routes/homeRoutes");
+const blogRoutes = require("./routes/blogRoutes");
+const faqRoutes = require("./routes/faqRoutes");
+const newsletterRoutes = require("./routes/newsletterRoutes");
+const errorHandler = require("./middleware/errorHandler");
+const { CmsPage, ComboOffer, BlogPost, Faq } = require("./models");
+
+const app = express();
+
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(morgan("dev"));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+app.use(
+  cors({
+    origin: [process.env.STORE_FRONT_URL, process.env.STORE_FRONT_URL2, process.env.STORE_ADMIN_URL],
+    credentials: true,
+  }),
+);
+
+app.get("/", (req, res) => {
+  res.send("sehat-potli-backend is running");
+});
+
+app.use("/uploads", express.static("uploads"));
+
+app.use("/api/auth", authRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/cart", cartRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/hero-banners", heroBannerRoutes);
+app.use("/api/coupons", couponRoutes);
+app.use("/api/testimonials", testimonialRoutes);
+app.use("/api/cms", cmsRoutes);
+app.use("/api/home", homeRoutes);
+app.use("/api/blog-posts", blogRoutes);
+app.use("/api/faqs", faqRoutes);
+app.use("/api/newsletter", newsletterRoutes);
+
+app.use((req, res) => {
+  res.status(404).json({ action: false, message: "Route not found" });
+});
+
+app.use(errorHandler);
+
+const DEFAULT_CMS_PAGES = [
+  {
+    slug: "terms-and-conditions",
+    title: "Terms & Conditions",
+    content: "<p>Add your terms and conditions content from the admin panel.</p>",
+  },
+  {
+    slug: "privacy-policy",
+    title: "Privacy Policy",
+    content: "<p>Add your privacy policy content from the admin panel.</p>",
+  },
+  {
+    slug: "refund-policy",
+    title: "Refund Policy",
+    content: "<p>Add your refund policy content from the admin panel.</p>",
+  },
+];
+
+const seedCmsPages = async () => {
+  for (const page of DEFAULT_CMS_PAGES) {
+    await CmsPage.findOrCreate({ where: { slug: page.slug }, defaults: page });
+  }
+};
+
+// One-time starter content for the new admin-managed list sections — only
+// runs if the table is empty, so admin add/delete afterward is never undone.
+const seedIfEmpty = async (Model, rows) => {
+  if ((await Model.count()) > 0) return;
+  for (let i = 0; i < rows.length; i++) {
+    await Model.create({ ...rows[i], sortOrder: i });
+  }
+};
+
+const seedStarterContent = async () => {
+  await seedIfEmpty(ComboOffer, [
+    {
+      title: "Buy 2 Get 10% Off",
+      description: "Mix and match any two 250g+ single dry fruit packs.",
+      discountLabel: "10% OFF",
+      ctaLabel: "Shop Combos",
+      ctaLink: "/products",
+    },
+    {
+      title: "Buy 3 Combo Packs @ Flat ₹1999",
+      description: "Pick any three combo/assorted boxes at one flat price.",
+      discountLabel: "FLAT ₹1999",
+      ctaLabel: "Build This Deal",
+      ctaLink: "/products",
+    },
+    {
+      title: "Festive Bundle — Save 15%",
+      description: "Trail Mix + Seeds Mix + Gift Hamper, bundled for the season.",
+      discountLabel: "15% OFF",
+      ctaLabel: "View Bundle",
+      ctaLink: "/products",
+    },
+  ]);
+
+  await seedIfEmpty(BlogPost, [
+    {
+      title: "5 Healthy Trail Mix Recipes for Busy Mornings",
+      excerpt: "Quick, protein-packed combinations you can prep once and snack on all week.",
+      readTime: "4 min read",
+      content:
+        "<p>Mornings are hectic, but that's no excuse to skip a nutritious snack. Here are five trail mix combinations you can batch-prep on a Sunday and portion out for the week ahead.</p><h3>1. Classic Energy Mix</h3><p>Almonds, cashews, raisins and a handful of dark chocolate chips — a balance of protein, healthy fats and a little sweetness.</p><h3>2. Protein Power Mix</h3><p>Roasted chana, peanuts and pumpkin seeds for a savory, protein-forward option.</p><h3>3. Antioxidant Mix</h3><p>Walnuts, dried cranberries and sunflower seeds — great for heart health.</p><h3>4. Kids' Favorite Mix</h3><p>Cashews, raisins and a few banana chips — mild and naturally sweet.</p><h3>5. Festive Mix</h3><p>Pistachios, almonds and dried figs — perfect for gifting or a special occasion.</p>",
+    },
+    {
+      title: "Smart Snacking: How Much Dry Fruit Should You Eat Daily?",
+      excerpt: "A simple guide to portion sizes for almonds, walnuts, and seed mixes.",
+      readTime: "3 min read",
+      content:
+        "<p>Dry fruits are nutrient-dense, which means a little goes a long way. As a general guideline, a daily handful (about 25–30g) is enough to get the benefits without overdoing the calories.</p><h3>Almonds &amp; Cashews</h3><p>About 8–10 almonds or 6–8 cashews a day is a good baseline for most adults.</p><h3>Walnuts</h3><p>4–5 halves a day is plenty — they're higher in fat than most other nuts.</p><h3>Seeds</h3><p>1–2 tablespoons of chia, flax or pumpkin seeds daily works well sprinkled over meals.</p>",
+    },
+    {
+      title: "The Festive Gifting Guide: Hampers That Feel Personal",
+      excerpt: "How to pick (or build) a dry fruit hamper that doesn't feel generic.",
+      readTime: "5 min read",
+      content:
+        "<p>A good gift hamper feels thoughtful, not generic. Here's how to pick one that stands out.</p><h3>Mix textures, not just types</h3><p>Combine something crunchy (almonds, pistachios), something chewy (dried figs, apricots) and something sweet (a small treat) for variety.</p><h3>Consider the packaging</h3><p>Reusable jars or tins add lasting value beyond the contents themselves.</p><h3>Personalize where you can</h3><p>A hand-written note or a custom mix based on the recipient's preferences makes all the difference.</p>",
+    },
+  ]);
+
+  await seedIfEmpty(Faq, [
+    { question: "How long does delivery take?", answer: "Most orders are delivered within 3–5 business days. Metro cities usually see delivery in 2–3 days." },
+    { question: "What is your return policy?", answer: "If a product arrives damaged or incorrect, you can request a return/replacement within 48 hours of delivery." },
+    { question: "How do you guarantee freshness?", answer: "Every batch is packed in small quantities and sealed in airtight, moisture-proof packaging with a printed best-before date." },
+    { question: "Is Cash on Delivery (COD) available?", answer: "Yes, COD is available on most pin codes. You'll see COD availability at checkout based on your delivery address." },
+    { question: "Can I subscribe for repeat orders?", answer: "Yes — use Subscribe & Save on any product to get it delivered automatically every 2 or 4 weeks, with an extra discount." },
+  ]);
+};
+
+const startServer = async () => {
+  try {
+    await connectDB();
+    await sequelize.sync({ alter: true });
+    console.log("Database synced");
+    await seedCmsPages();
+    await seedStarterContent();
+    const PORT = process.env.PORT || 4000;
+    app.listen(PORT, () => {
+      console.log(`sehat-potli-backend running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  }
+};
+
+startServer();

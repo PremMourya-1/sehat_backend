@@ -1,0 +1,7 @@
+
+> sehat-potli-backend@1.0.0 start
+> node index.js
+
+PostgreSQL Connected
+Database synced
+sehat-potli-backend running on port 4000
