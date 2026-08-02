@@ -9,8 +9,9 @@ exports.getAllCustomers = asyncHandler(async (req, res) => {
       "id",
       "name",
       "email",
-      "mobile",
-      "isVerified",
+      "mobileNumber",
+      "mobileVerified",
+      "emailVerified",
       "createdAt",
       [sequelize.fn("COUNT", sequelize.col("Orders.id")), "orderCount"],
     ],
@@ -25,7 +26,15 @@ exports.getAllCustomers = asyncHandler(async (req, res) => {
 // GET /api/admin/customers/:id
 exports.getCustomerById = asyncHandler(async (req, res) => {
   const customer = await Customer.findByPk(req.params.id, {
-    attributes: ["id", "name", "email", "mobile", "isVerified", "createdAt"],
+    attributes: [
+      "id",
+      "name",
+      "email",
+      "mobileNumber",
+      "mobileVerified",
+      "emailVerified",
+      "createdAt",
+    ],
   });
   if (!customer) return sendError(res, "Customer not found", 404);
 

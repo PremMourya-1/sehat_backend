@@ -38,6 +38,7 @@ function serializeProduct(product) {
     tags: p.tags || [],
     status: p.status,
     showOnHome: p.showOnHome,
+    codAvailable: p.codAvailable,
     nutrition: p.nutrition || null,
     composition: p.composition || null,
     variants: (p.variants || []).map((v) => ({

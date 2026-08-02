@@ -9,10 +9,14 @@ const { sequelize, connectDB } = require("./config/db");
 require("./models");
 
 const authRoutes = require("./routes/authRoutes");
+const authAdapterRoutes = require("./routes/authAdapterRoutes");
+const mobileRoutes = require("./routes/mobileRoutes");
 const productRoutes = require("./routes/productRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const orderRoutes = require("./routes/orderRoutes");
+const checkoutRoutes = require("./routes/checkoutRoutes");
+const webhookRoutes = require("./routes/webhookRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const heroBannerRoutes = require("./routes/heroBannerRoutes");
 const couponRoutes = require("./routes/couponRoutes");
@@ -29,7 +33,11 @@ const app = express();
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(morgan("dev"));
-app.use(express.json());
+// `verify` stashes the exact raw bytes on req.rawBody alongside the usual
+// parsed req.body — needed by the Razorpay webhook handler, which has to
+// HMAC the *raw* payload (a re-serialized JSON.stringify(req.body) isn't
+// guaranteed byte-identical to what Razorpay actually signed).
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -47,10 +55,14 @@ app.get("/", (req, res) => {
 app.use("/uploads", express.static("uploads"));
 
 app.use("/api/auth", authRoutes);
+app.use("/api/auth/adapter", authAdapterRoutes);
+app.use("/api/customer/mobile", mobileRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/checkout", checkoutRoutes);
+app.use("/api/webhooks", webhookRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/hero-banners", heroBannerRoutes);
 app.use("/api/coupons", couponRoutes);

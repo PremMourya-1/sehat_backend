@@ -18,6 +18,10 @@ const BlogPost = require("./BlogPost");
 const Faq = require("./Faq");
 const NewsletterSubscriber = require("./NewsletterSubscriber");
 const ProductReview = require("./ProductReview");
+const Account = require("./Account");
+const VerificationToken = require("./VerificationToken");
+const IntegrationSetting = require("./IntegrationSetting");
+const WebSetting = require("./WebSetting");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -67,6 +71,10 @@ OrderItem.belongsTo(ProductVariant, { as: "variant", foreignKey: "variantId" });
 Product.hasMany(ProductReview, { as: "reviews", foreignKey: "productId", onDelete: "CASCADE" });
 ProductReview.belongsTo(Product, { foreignKey: "productId" });
 
+// Customer <-> Account (Auth.js linked OAuth identities)
+Customer.hasMany(Account, { foreignKey: "userId", onDelete: "CASCADE" });
+Account.belongsTo(Customer, { foreignKey: "userId" });
+
 module.exports = {
   sequelize,
   Admin,
@@ -88,4 +96,8 @@ module.exports = {
   Faq,
   NewsletterSubscriber,
   ProductReview,
+  Account,
+  VerificationToken,
+  IntegrationSetting,
+  WebSetting,
 };

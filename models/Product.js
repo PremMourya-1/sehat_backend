@@ -40,6 +40,13 @@ const Product = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
+    // Per-product COD override — final COD availability at checkout also
+    // depends on the site-wide toggle (see utils/webSettings.js) and courier
+    // COD serviceability for the delivery pincode.
+    codAvailable: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
     // Per-100g nutrition facts: { calories, protein, fat, carbs, fiber }.
     // Admin-entered, per-product — null until the admin fills it in (no
     // fake/placeholder values are ever shown on the storefront).

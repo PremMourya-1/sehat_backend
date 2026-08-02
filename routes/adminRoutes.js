@@ -63,6 +63,11 @@ const {
   getAllSubscribers,
   deleteSubscriber,
 } = require("../controllers/adminNewsletterController");
+const {
+  getIntegrationSettings,
+  updateIntegrationSettings,
+} = require("../controllers/adminIntegrationSettingsController");
+const { getWebSettings, updateWebSettings } = require("../controllers/adminWebSettingsController");
 
 // --- Auth (login is the only unauthenticated admin route) ---
 router.post("/login", adminLogin);
@@ -144,5 +149,13 @@ router.delete("/faqs/:id", deleteFaq);
 // --- Newsletter Subscribers (read + delete only, no add/edit) ---
 router.get("/newsletter-subscribers", getAllSubscribers);
 router.delete("/newsletter-subscribers/:id", deleteSubscriber);
+
+// --- Integration Settings (Shiprocket today; generic for future integrations) ---
+router.get("/integrations/:key", getIntegrationSettings);
+router.put("/integrations/:key", updateIntegrationSettings);
+
+// --- Web Settings (site-wide business settings — COD toggle today) ---
+router.get("/web-settings", getWebSettings);
+router.put("/web-settings", updateWebSettings);
 
 module.exports = router;

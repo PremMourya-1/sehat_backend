@@ -1,0 +1,2 @@
+ALTER TABLE "Customers" ALTER COLUMN "password" DROP NOT NULL;
+ALTER TABLE "Customers" ALTER COLUMN "mobile" DROP NOT NULL;

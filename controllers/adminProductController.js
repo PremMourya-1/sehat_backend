@@ -128,7 +128,8 @@ exports.getProductById = asyncHandler(async (req, res) => {
 
 // POST /api/admin/products  (multipart, up to 6 images)
 exports.createProduct = asyncHandler(async (req, res) => {
-  const { name, categoryId, shortDescription, longDescription, status, showOnHome, isTrending } = req.body;
+  const { name, categoryId, shortDescription, longDescription, status, showOnHome, isTrending, codAvailable } =
+    req.body;
 
   if (!name) return sendError(res, "Name is required", 400);
 
@@ -152,6 +153,7 @@ exports.createProduct = asyncHandler(async (req, res) => {
     status: toBool(status, true),
     showOnHome: toBool(showOnHome, false),
     isTrending: toBool(isTrending, false),
+    codAvailable: toBool(codAvailable, true),
     nutrition: nutrition || null,
     composition: composition || null,
   });
@@ -188,7 +190,8 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   const product = await Product.findByPk(req.params.id);
   if (!product) return sendError(res, "Product not found", 404);
 
-  const { name, categoryId, shortDescription, longDescription, status, showOnHome, isTrending } = req.body;
+  const { name, categoryId, shortDescription, longDescription, status, showOnHome, isTrending, codAvailable } =
+    req.body;
 
   if (req.body.tags !== undefined) {
     const tags = parseTags(req.body.tags);
@@ -204,6 +207,7 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   if (status !== undefined) product.status = toBool(status, product.status);
   if (showOnHome !== undefined) product.showOnHome = toBool(showOnHome, product.showOnHome);
   if (isTrending !== undefined) product.isTrending = toBool(isTrending, product.isTrending);
+  if (codAvailable !== undefined) product.codAvailable = toBool(codAvailable, product.codAvailable);
   if (req.body.nutrition !== undefined) product.nutrition = parseNutrition(req.body.nutrition) || null;
   if (req.body.composition !== undefined) product.composition = parseComposition(req.body.composition) || null;
 

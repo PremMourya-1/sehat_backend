@@ -1,9 +1,17 @@
-const { Order, OrderItem, Product, ProductVariant, Cart, CartItem } = require("../models");
+const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const calculateSubtotal = require("../utils/calculateSubtotal");
 const evaluateCoupon = require("../utils/evaluateCoupon");
 const generateOrderNumber = require("../utils/generateOrderNumber");
+const { checkPincodeServiceability, parseWeightToKg } = require("../utils/shiprocket");
+const { resolvePincodeLocation } = require("../utils/pincodeResolver");
+const { getCodAvailability } = require("../utils/checkCodAvailability");
+const { createRazorpayOrder, getRazorpayCredentials } = require("../utils/razorpay");
+
+const PINCODE_REGEX = /^[0-9]{6}$/;
+const MIN_ORDER_WEIGHT_KG = 0.1;
+const PAYMENT_METHODS = ["cod", "prepaid"];
 
 const orderItemIncludes = [
   {
@@ -14,7 +22,11 @@ const orderItemIncludes = [
 
 // POST /api/orders
 // body: { items: [{ variantId, quantity }], couponCode?, shippingName, shippingPhone,
-//         shippingAddress, shippingCity, shippingState, shippingPincode }
+//         shippingAddress, shippingPincode, paymentMethod? ("cod" | "prepaid", defaults to "cod") }
+// shippingCity/shippingState are never taken from the client — the customer
+// only ever enters/confirms a pincode (checked up front on the product page,
+// see checkoutController.checkPincode); city/state are resolved server-side
+// below via resolvePincodeLocation() so Shiprocket's order payload has them.
 exports.createOrder = asyncHandler(async (req, res) => {
   const {
     items,
@@ -22,16 +34,21 @@ exports.createOrder = asyncHandler(async (req, res) => {
     shippingName,
     shippingPhone,
     shippingAddress,
-    shippingCity,
-    shippingState,
     shippingPincode,
+    paymentMethod = "cod",
   } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     return sendError(res, "Order must contain at least one item", 400);
   }
-  if (!shippingName || !shippingPhone || !shippingAddress || !shippingCity || !shippingState || !shippingPincode) {
+  if (!shippingName || !shippingPhone || !shippingAddress || !shippingPincode) {
     return sendError(res, "Complete shipping details are required", 400);
+  }
+  if (!PINCODE_REGEX.test(shippingPincode)) {
+    return sendError(res, "A valid 6-digit pincode is required", 400);
+  }
+  if (!PAYMENT_METHODS.includes(paymentMethod)) {
+    return sendError(res, `paymentMethod must be one of: ${PAYMENT_METHODS.join(", ")}`, 400);
   }
 
   const subtotalResult = await calculateSubtotal(items);
@@ -58,44 +75,113 @@ exports.createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  const order = await Order.create({
-    orderNumber: generateOrderNumber(),
-    customerId: req.customer.id,
-    subtotal,
-    discountAmount,
-    couponCode: appliedCoupon ? appliedCoupon.code : null,
-    total,
-    shippingName,
-    shippingPhone,
-    shippingAddress,
-    shippingCity,
-    shippingState,
-    shippingPincode,
-  });
+  // Defense in depth: the storefront already gates Buy Now/checkout behind
+  // a serviceable pincode check, but a client-side gate is never trusted
+  // alone — re-verify here with the order's real weight/COD amount.
+  const totalWeightKg = Math.max(
+    lineItems.reduce((sum, line) => sum + parseWeightToKg(line.weight) * line.quantity, 0),
+    MIN_ORDER_WEIGHT_KG,
+  );
+  const serviceability = await checkPincodeServiceability(shippingPincode, totalWeightKg, total);
+  if (!serviceability.serviceable) {
+    return sendError(res, "Sorry, delivery isn't available to this pincode", 400);
+  }
 
-  for (const line of lineItems) {
-    await OrderItem.create({
-      orderId: order.id,
-      productId: line.productId,
-      variantId: line.variantId,
-      weight: line.weight,
-      price: line.price,
-      quantity: line.quantity,
+  const location = await resolvePincodeLocation(shippingPincode);
+  if (!location) {
+    return sendError(res, "Could not verify this pincode — please check and try again", 400);
+  }
+
+  // Defense in depth again: checkout only shows COD as selectable when it's
+  // actually available, but never trust that alone — re-verify here too.
+  if (paymentMethod === "cod") {
+    const codAvailability = await getCodAvailability(lineItems);
+    if (!codAvailability.available) {
+      return sendError(res, codAvailability.reason || "Cash on Delivery is not available for this order", 400);
+    }
+  }
+
+  // Everything below is one transaction — including the Razorpay order
+  // creation for prepaid — so a failure anywhere (a network blip calling
+  // Razorpay included) rolls back cleanly with no ghost order, no
+  // decremented stock, nothing for a retry to collide with.
+  let orderId;
+  let razorpayInit = null;
+  try {
+    await sequelize.transaction(async (t) => {
+      const order = await Order.create(
+        {
+          orderNumber: generateOrderNumber(),
+          customerId: req.customer.id,
+          subtotal,
+          discountAmount,
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
+          total,
+          paymentMethod,
+          shippingName,
+          shippingPhone,
+          shippingAddress,
+          shippingCity: location.city,
+          shippingState: location.state,
+          shippingPincode,
+        },
+        { transaction: t },
+      );
+      orderId = order.id;
+
+      for (const line of lineItems) {
+        await OrderItem.create(
+          {
+            orderId: order.id,
+            productId: line.productId,
+            variantId: line.variantId,
+            weight: line.weight,
+            price: line.price,
+            quantity: line.quantity,
+          },
+          { transaction: t },
+        );
+
+        await ProductVariant.decrement("stock", {
+          by: line.quantity,
+          where: { id: line.variantId },
+          transaction: t,
+        });
+      }
+
+      if (appliedCoupon) {
+        await appliedCoupon.increment("usedCount", { transaction: t });
+      }
+
+      // Clear the customer's persisted server-side cart, if one exists.
+      const cart = await Cart.findOne({ where: { customerId: req.customer.id }, transaction: t });
+      if (cart) await CartItem.destroy({ where: { cartId: cart.id }, transaction: t });
+
+      if (paymentMethod === "prepaid") {
+        const { keyId } = await getRazorpayCredentials();
+        const razorpayOrder = await createRazorpayOrder({
+          amount: total,
+          receipt: order.orderNumber,
+          notes: { orderId: order.id },
+        });
+        order.razorpayOrderId = razorpayOrder.id;
+        await order.save({ transaction: t });
+        razorpayInit = { razorpayOrderId: razorpayOrder.id, razorpayKeyId: keyId, amount: razorpayOrder.amount };
+      }
     });
-
-    await ProductVariant.decrement("stock", { by: line.quantity, where: { id: line.variantId } });
+  } catch (err) {
+    console.error(`Order creation failed: ${err.message}`);
+    return sendError(
+      res,
+      paymentMethod === "prepaid"
+        ? "Could not initiate online payment — please try again or choose Cash on Delivery"
+        : "Could not place order — please try again",
+      400,
+    );
   }
 
-  if (appliedCoupon) {
-    await appliedCoupon.increment("usedCount");
-  }
-
-  // Clear the customer's persisted server-side cart, if one exists.
-  const cart = await Cart.findOne({ where: { customerId: req.customer.id } });
-  if (cart) await CartItem.destroy({ where: { cartId: cart.id } });
-
-  const fullOrder = await Order.findByPk(order.id, { include: orderItemIncludes });
-  return sendSuccess(res, fullOrder, "Order placed successfully", 201);
+  const fullOrder = await Order.findByPk(orderId, { include: orderItemIncludes });
+  return sendSuccess(res, { ...fullOrder.toJSON(), razorpay: razorpayInit }, "Order placed successfully", 201);
 });
 
 // GET /api/orders?page=&limit=
