@@ -5,10 +5,13 @@ const { encrypt } = require("../utils/encryption");
 const shiprocket = require("../utils/shiprocket");
 
 // Which config fields must be stored encrypted, per integration. Adding a
-// new integration is just a new entry here — no new table, no new controller.
+// new integration is just a new entry here — no new table, no new controller
+// — as long as its config is a flat object like this one. Razorpay outgrew
+// this shape (test/live credential sets + an active-mode switch) and has
+// its own dedicated controller/routes now — see
+// adminRazorpaySettingsController.js and routes/adminRoutes.js.
 const SENSITIVE_FIELDS = {
   shiprocket: ["password"],
-  razorpay: ["keySecret", "webhookSecret"],
 };
 
 // Called right after an integration's settings are saved, so anything

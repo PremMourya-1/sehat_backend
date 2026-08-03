@@ -5,7 +5,8 @@ const { checkPincodeServiceability } = require("../utils/shiprocket");
 const calculateSubtotal = require("../utils/calculateSubtotal");
 const { getCodAvailability } = require("../utils/checkCodAvailability");
 const { getRazorpayCredentials, verifyPaymentSignature } = require("../utils/razorpay");
-const { markOrderPaidAndFulfill } = require("../utils/markOrderPaid");
+const { markOrderPaid } = require("../utils/markOrderPaid");
+const { emitNewOrder } = require("../utils/socket");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
 
@@ -70,8 +71,14 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     return sendError(res, "Payment verification failed", 400);
   }
 
-  await markOrderPaidAndFulfill(order.id, razorpayPaymentId);
+  const { alreadyPaid } = await markOrderPaid(order.id, razorpayPaymentId);
   await order.reload();
+
+  // Only notify the admin once, for whichever path (frontend callback here,
+  // or the webhook fallback) actually flips the order to paid first.
+  if (!alreadyPaid) {
+    emitNewOrder(order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+  }
 
   return sendSuccess(res, order, "Payment verified successfully");
 });

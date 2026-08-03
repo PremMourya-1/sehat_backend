@@ -8,11 +8,19 @@ exports.getWebSettings = asyncHandler(async (req, res) => {
   return sendSuccess(res, settings);
 });
 
-// PUT /api/admin/web-settings  { codEnabled? , ...future settings }
+// PUT /api/admin/web-settings  { codEnabled?, notifications?: { chromePushEnabled?, toastPopupEnabled?, soundEnabled? } }
 exports.updateWebSettings = asyncHandler(async (req, res) => {
-  const { codEnabled } = req.body;
+  const { codEnabled, notifications } = req.body;
   const patch = {};
   if (codEnabled !== undefined) patch.codEnabled = Boolean(codEnabled);
+
+  // `notifications` is a nested object — updateSiteSettings's merge-patch is
+  // shallow, so a partial toggle here (just soundEnabled, say) would
+  // otherwise wipe the other two. Merge it against current values first.
+  if (notifications !== undefined) {
+    const current = await getSiteSettings();
+    patch.notifications = { ...current.notifications, ...notifications };
+  }
 
   const settings = await updateSiteSettings(patch);
   return sendSuccess(res, settings, "Settings updated successfully");

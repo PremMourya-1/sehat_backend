@@ -26,6 +26,27 @@ exports.getOrderById = asyncHandler(async (req, res) => {
   return sendSuccess(res, order);
 });
 
+// Shared by the single and bulk status-update endpoints below, so the
+// Shiprocket-trigger logic only lives in one place. An order first being
+// marked "processing" — by the admin, deliberately, for both COD and
+// prepaid orders — is this store's fulfillment-confirmation point; that's
+// what pushes it to Shiprocket and runs the shipment -> courier -> AWB
+// pipeline. fulfillOrderShipment() never throws (failures are recorded on
+// the order itself), and skips the shipment push if one was already created.
+async function applyOrderStatus(order, status) {
+  const isNewlyProcessing = status === "processing" && order.status !== "processing";
+
+  order.status = status;
+  await order.save();
+
+  if (isNewlyProcessing && order.shipmentStatus !== "created") {
+    await fulfillOrderShipment(order.id);
+    await order.reload();
+  }
+
+  return order;
+}
+
 // PUT /api/admin/orders/:id/status  { status }
 exports.updateOrderStatus = asyncHandler(async (req, res) => {
   const { status } = req.body;
@@ -36,20 +57,29 @@ exports.updateOrderStatus = asyncHandler(async (req, res) => {
   const order = await Order.findByPk(req.params.id);
   if (!order) return sendError(res, "Order not found", 404);
 
-  const isNewlyProcessing = status === "processing" && order.status !== "processing";
+  const updated = await applyOrderStatus(order, status);
+  return sendSuccess(res, updated, "Order status updated successfully");
+});
 
-  order.status = status;
-  await order.save();
-
-  // This store has no separate payment/confirmation step, so an order first
-  // being marked "processing" is its confirmation point — push it to
-  // Shiprocket and run the full shipment -> courier -> AWB pipeline right
-  // away. fulfillOrderShipment() never throws (failures are recorded on the
-  // order itself), and skips the shipment push if one was already created.
-  if (isNewlyProcessing && order.shipmentStatus !== "created") {
-    await fulfillOrderShipment(order.id);
-    await order.reload();
+// PUT /api/admin/orders/bulk-status  { orderIds: [...], status }
+// Processed sequentially (not Promise.all) — each newly-"processing" order
+// makes real Shiprocket API calls, and running many of those concurrently
+// risks rate-limiting/races on Shiprocket's side for what's an infrequent
+// admin bulk action anyway.
+exports.bulkUpdateOrderStatus = asyncHandler(async (req, res) => {
+  const { orderIds, status } = req.body;
+  if (!Array.isArray(orderIds) || orderIds.length === 0) {
+    return sendError(res, "orderIds are required", 400);
+  }
+  if (!ALLOWED_STATUSES.includes(status)) {
+    return sendError(res, `Status must be one of: ${ALLOWED_STATUSES.join(", ")}`, 400);
   }
 
-  return sendSuccess(res, order, "Order status updated successfully");
+  const orders = await Order.findAll({ where: { id: orderIds } });
+  const updated = [];
+  for (const order of orders) {
+    updated.push(await applyOrderStatus(order, status));
+  }
+
+  return sendSuccess(res, updated, `${updated.length} order(s) updated successfully`);
 });

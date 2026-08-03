@@ -2,7 +2,8 @@ const { Order } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { getRazorpayWebhookSecret, verifyWebhookSignature } = require("../utils/razorpay");
-const { markOrderPaidAndFulfill } = require("../utils/markOrderPaid");
+const { markOrderPaid } = require("../utils/markOrderPaid");
+const { emitNewOrder } = require("../utils/socket");
 
 // POST /api/webhooks/razorpay — fallback for when the frontend's
 // verify-payment callback never fires (browser closed mid-payment, network
@@ -39,12 +40,15 @@ exports.razorpayWebhook = asyncHandler(async (req, res) => {
 
     const order = razorpayOrderId ? await Order.findOne({ where: { razorpayOrderId } }) : null;
     if (order) {
-      const result = await markOrderPaidAndFulfill(order.id, razorpayPaymentId);
+      const result = await markOrderPaid(order.id, razorpayPaymentId);
       console.log(
         result.alreadyPaid
           ? `Razorpay webhook: order ${order.orderNumber} was already paid (likely confirmed via the frontend callback first)`
           : `Razorpay webhook: order ${order.orderNumber} marked paid via webhook fallback`,
       );
+      if (!result.alreadyPaid) {
+        emitNewOrder(order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+      }
     } else {
       console.error(`Razorpay webhook: payment.captured for unknown razorpay order ${razorpayOrderId}`);
     }

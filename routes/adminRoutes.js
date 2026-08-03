@@ -24,6 +24,7 @@ const {
   getAllOrders,
   getOrderById: getAdminOrderById,
   updateOrderStatus,
+  bulkUpdateOrderStatus,
 } = require("../controllers/adminOrderController");
 const { getAllCustomers, getCustomerById } = require("../controllers/adminCustomerController");
 const {
@@ -67,7 +68,16 @@ const {
   getIntegrationSettings,
   updateIntegrationSettings,
 } = require("../controllers/adminIntegrationSettingsController");
+const {
+  getRazorpaySettings,
+  updateRazorpaySettings,
+} = require("../controllers/adminRazorpaySettingsController");
 const { getWebSettings, updateWebSettings } = require("../controllers/adminWebSettingsController");
+const {
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+} = require("../controllers/adminNotificationController");
 
 // --- Auth (login is the only unauthenticated admin route) ---
 router.post("/login", adminLogin);
@@ -99,6 +109,7 @@ router.delete("/categories/:id", deleteCategory);
 router.get("/orders", getAllOrders);
 router.get("/orders/:id", getAdminOrderById);
 router.put("/orders/:id/status", updateOrderStatus);
+router.put("/orders/bulk-status", bulkUpdateOrderStatus);
 
 // --- Customers (read-only) ---
 router.get("/customers", getAllCustomers);
@@ -150,12 +161,25 @@ router.delete("/faqs/:id", deleteFaq);
 router.get("/newsletter-subscribers", getAllSubscribers);
 router.delete("/newsletter-subscribers/:id", deleteSubscriber);
 
-// --- Integration Settings (Shiprocket today; generic for future integrations) ---
+// --- Integration Settings ---
+// Razorpay outgrew the generic flat-config shape (test/live credential sets
+// + an active-mode switch) and has its own controller now — registered
+// before the generic /:key route below so it takes precedence for this
+// one literal path (Express matches route registration order; ":key" would
+// otherwise swallow "razorpay" too).
+router.get("/integrations/razorpay", getRazorpaySettings);
+router.put("/integrations/razorpay", updateRazorpaySettings);
+// Shiprocket today; generic for future flat-config integrations.
 router.get("/integrations/:key", getIntegrationSettings);
 router.put("/integrations/:key", updateIntegrationSettings);
 
 // --- Web Settings (site-wide business settings — COD toggle today) ---
 router.get("/web-settings", getWebSettings);
 router.put("/web-settings", updateWebSettings);
+
+// --- Notifications (new-order alerts — see utils/socket.js emitNewOrder) ---
+router.get("/notifications", getNotifications);
+router.patch("/notifications/mark-all-read", markAllNotificationsRead);
+router.patch("/notifications/:id/read", markNotificationRead);
 
 module.exports = router;

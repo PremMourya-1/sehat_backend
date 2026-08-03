@@ -1,3 +1,4 @@
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
@@ -7,6 +8,7 @@ require("dotenv").config();
 
 const { sequelize, connectDB } = require("./config/db");
 require("./models");
+const { initSocket } = require("./utils/socket");
 
 const authRoutes = require("./routes/authRoutes");
 const authAdapterRoutes = require("./routes/authAdapterRoutes");
@@ -178,7 +180,9 @@ const startServer = async () => {
     await seedCmsPages();
     await seedStarterContent();
     const PORT = process.env.PORT || 4000;
-    app.listen(PORT, () => {
+    const httpServer = http.createServer(app);
+    initSocket(httpServer);
+    httpServer.listen(PORT, () => {
       console.log(`sehat-potli-backend running on port ${PORT}`);
     });
   } catch (err) {

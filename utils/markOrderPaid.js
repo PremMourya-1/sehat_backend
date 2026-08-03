@@ -1,33 +1,25 @@
 const { Order } = require("../models");
-const { fulfillOrderShipment } = require("./shiprocket");
 
 // Shared by both the frontend payment-verification endpoint and the
 // Razorpay webhook fallback, since either one might be what actually
 // confirms a given payment first (see checkoutController.verifyPayment /
-// webhookController.razorpayWebhook). Marks the order paid and runs the
-// same shipment pipeline COD orders get once confirmed — never duplicated
-// per payment_status.
+// webhookController.razorpayWebhook). Only marks the order paid — it does
+// NOT touch order.status or push to Shiprocket. Getting paid is not the
+// same as being confirmed/ready to ship: the admin still reviews and moves
+// the order to "processing" themselves (same as COD orders always have),
+// which is what actually triggers fulfillOrderShipment — see
+// adminOrderController.updateOrderStatus.
 //
 // The UPDATE ... WHERE paymentStatus = "pending" is the atomicity: if both
 // paths race, only one of them actually flips the row (Postgres serializes
-// concurrent UPDATEs on the same row), so only one ever calls
-// fulfillOrderShipment().
-async function markOrderPaidAndFulfill(orderId, razorpayPaymentId) {
+// concurrent UPDATEs on the same row).
+async function markOrderPaid(orderId, razorpayPaymentId) {
   const [affected] = await Order.update(
-    { paymentStatus: "paid", razorpayPaymentId, status: "processing" },
+    { paymentStatus: "paid", razorpayPaymentId },
     { where: { id: orderId, paymentStatus: "pending" } },
   );
 
-  if (affected === 0) {
-    return { alreadyPaid: true };
-  }
-
-  const order = await Order.findByPk(orderId);
-  if (order.shipmentStatus !== "created") {
-    await fulfillOrderShipment(orderId);
-  }
-
-  return { alreadyPaid: false };
+  return { alreadyPaid: affected === 0 };
 }
 
-module.exports = { markOrderPaidAndFulfill };
+module.exports = { markOrderPaid };

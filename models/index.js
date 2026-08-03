@@ -22,6 +22,7 @@ const Account = require("./Account");
 const VerificationToken = require("./VerificationToken");
 const IntegrationSetting = require("./IntegrationSetting");
 const WebSetting = require("./WebSetting");
+const Notification = require("./Notification");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -75,6 +76,10 @@ ProductReview.belongsTo(Product, { foreignKey: "productId" });
 Customer.hasMany(Account, { foreignKey: "userId", onDelete: "CASCADE" });
 Account.belongsTo(Customer, { foreignKey: "userId" });
 
+// Order <-> Notification (new-order admin notifications)
+Order.hasMany(Notification, { foreignKey: "orderId", onDelete: "CASCADE" });
+Notification.belongsTo(Order, { foreignKey: "orderId" });
+
 module.exports = {
   sequelize,
   Admin,
@@ -100,4 +105,5 @@ module.exports = {
   VerificationToken,
   IntegrationSetting,
   WebSetting,
+  Notification,
 };

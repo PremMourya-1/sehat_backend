@@ -8,6 +8,7 @@ const { checkPincodeServiceability, parseWeightToKg } = require("../utils/shipro
 const { resolvePincodeLocation } = require("../utils/pincodeResolver");
 const { getCodAvailability } = require("../utils/checkCodAvailability");
 const { createRazorpayOrder, getRazorpayCredentials } = require("../utils/razorpay");
+const { emitNewOrder } = require("../utils/socket");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
 const MIN_ORDER_WEIGHT_KG = 0.1;
@@ -181,6 +182,14 @@ exports.createOrder = asyncHandler(async (req, res) => {
   }
 
   const fullOrder = await Order.findByPk(orderId, { include: orderItemIncludes });
+
+  // COD orders are confirmed the moment they're placed — no separate payment
+  // step — so this is where the admin gets notified. Prepaid orders notify
+  // later, only once payment is actually verified (see checkoutController).
+  if (paymentMethod === "cod") {
+    emitNewOrder(fullOrder).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+  }
+
   return sendSuccess(res, { ...fullOrder.toJSON(), razorpay: razorpayInit }, "Order placed successfully", 201);
 });
 
