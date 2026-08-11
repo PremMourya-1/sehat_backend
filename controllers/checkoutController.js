@@ -2,17 +2,24 @@ const { Order } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { checkPincodeServiceability } = require("../utils/shiprocket");
+const { resolvePincodeLocation } = require("../utils/pincodeResolver");
+const { getShippingCharge } = require("../utils/shippingZones");
 const calculateSubtotal = require("../utils/calculateSubtotal");
 const { getCodAvailability } = require("../utils/checkCodAvailability");
 const { getRazorpayCredentials, verifyPaymentSignature } = require("../utils/razorpay");
 const { markOrderPaid } = require("../utils/markOrderPaid");
 const { emitNewOrder } = require("../utils/socket");
+const { sendOrderConfirmedEmail } = require("../utils/email");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
 
 // GET /api/checkout/check-pincode?pincode=XXXXXX — public, no auth. Used by
-// the product page's "Check delivery" widget before the customer has a cart
-// item or an order yet (see utils/shiprocket.js checkPincodeServiceability).
+// the product page's "Check delivery" widget AND checkout's Step 1 (see
+// utils/shiprocket.js checkPincodeServiceability). Also resolves the
+// shipping charge for a serviceable pincode so checkout can show it in the
+// order summary before the customer places the order — the same
+// getShippingCharge(state) call orderController.createOrder makes again at
+// order-creation time (that one is authoritative; this is a preview).
 exports.checkPincode = asyncHandler(async (req, res) => {
   const { pincode } = req.query;
   if (!pincode || !PINCODE_REGEX.test(pincode)) {
@@ -20,7 +27,13 @@ exports.checkPincode = asyncHandler(async (req, res) => {
   }
 
   const result = await checkPincodeServiceability(pincode);
-  return sendSuccess(res, result);
+  if (!result.serviceable) {
+    return sendSuccess(res, { ...result, shippingCharge: 0 });
+  }
+
+  const location = await resolvePincodeLocation(pincode);
+  const shippingCharge = await getShippingCharge(location?.state);
+  return sendSuccess(res, { ...result, shippingCharge });
 });
 
 // POST /api/checkout/cod-availability  { items: [{ variantId, quantity }] }
@@ -78,6 +91,9 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
   // or the webhook fallback) actually flips the order to paid first.
   if (!alreadyPaid) {
     emitNewOrder(order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+    sendOrderConfirmedEmail(order.id).catch((err) =>
+      console.error(`Email: order-confirmed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
   }
 
   return sendSuccess(res, order, "Payment verified successfully");

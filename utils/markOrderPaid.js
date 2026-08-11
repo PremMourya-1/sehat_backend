@@ -4,11 +4,9 @@ const { Order } = require("../models");
 // Razorpay webhook fallback, since either one might be what actually
 // confirms a given payment first (see checkoutController.verifyPayment /
 // webhookController.razorpayWebhook). Only marks the order paid — it does
-// NOT touch order.status or push to Shiprocket. Getting paid is not the
-// same as being confirmed/ready to ship: the admin still reviews and moves
-// the order to "processing" themselves (same as COD orders always have),
-// which is what actually triggers fulfillOrderShipment — see
-// adminOrderController.updateOrderStatus.
+// NOT touch order.status or push to Shiprocket. Shiprocket fulfillment is
+// never automatic; it only ever runs from the admin's explicit "Generate
+// Label" action (see utils/shiprocket.js generateLabelAndFulfill).
 //
 // The UPDATE ... WHERE paymentStatus = "pending" is the atomicity: if both
 // paths race, only one of them actually flips the row (Postgres serializes

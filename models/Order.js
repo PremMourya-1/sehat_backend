@@ -26,6 +26,14 @@ const Order = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    // Zone-based charge resolved from the delivery state at order-creation
+    // time (see utils/shippingZones.js getShippingCharge) — stored here
+    // (not just shown on the frontend) so it's part of the actual amount
+    // charged/collected: total = subtotal - discountAmount + shippingCharge.
+    shippingCharge: {
+      type: DataTypes.DECIMAL(10, 2),
+      defaultValue: 0,
+    },
     total: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
@@ -33,6 +41,26 @@ const Order = sequelize.define(
     status: {
       type: DataTypes.ENUM("pending", "processing", "shipped", "delivered", "cancelled"),
       defaultValue: "pending",
+    },
+    // Customer-facing status — deliberately separate from the admin's
+    // operational `status` above. "dispatched" is set automatically the
+    // moment label generation succeeds (see utils/shiprocket.js
+    // generateLabelAndFulfill). picked_up/in_transit/out_for_delivery/
+    // delivered/rto are driven by Shiprocket's status webhook from here on
+    // (see utils/shiprocket.js handleShiprocketStatusWebhook) — "rto" covers
+    // every Return-to-Origin sub-status Shiprocket sends (RTO Initiated,
+    // RTO Delivered, RTO Acknowledged, ...), not tracked as separate values.
+    customerStatus: {
+      type: DataTypes.ENUM(
+        "confirmed",
+        "dispatched",
+        "picked_up",
+        "in_transit",
+        "out_for_delivery",
+        "delivered",
+        "rto",
+      ),
+      defaultValue: "confirmed",
     },
     shippingName: { type: DataTypes.STRING, allowNull: true },
     shippingPhone: { type: DataTypes.STRING, allowNull: true },
@@ -84,6 +112,43 @@ const Order = sequelize.define(
     // Most recent reason AWB assignment was skipped or failed — cleared back
     // to null on a successful assignment. Debugging/admin visibility only.
     lastAwbError: { type: DataTypes.TEXT, allowNull: true },
+
+    // Pickup scheduling (see utils/shiprocket.js schedulePickup/cancelPickup).
+    pickupStatus: {
+      type: DataTypes.ENUM("not_scheduled", "scheduled", "failed", "cancelled"),
+      defaultValue: "not_scheduled",
+    },
+    // When we asked Shiprocket to schedule the pickup (our own timestamp).
+    pickupScheduledAt: { type: DataTypes.DATE, allowNull: true },
+    // The pickup date Shiprocket itself confirms/expects, from its response.
+    pickupDate: { type: DataTypes.DATE, allowNull: true },
+    // Most recent reason pickup scheduling failed — cleared back to null on
+    // a successful schedule. Debugging/admin visibility only.
+    lastPickupError: { type: DataTypes.TEXT, allowNull: true },
+
+    // Shipping label (see utils/shiprocket.js generateLabel). Requires AWB
+    // already assigned — generated as part of the admin's explicit
+    // "Generate Label" action, not any automatic status transition.
+    labelStatus: {
+      type: DataTypes.ENUM("not_generated", "generated", "failed"),
+      defaultValue: "not_generated",
+    },
+    labelUrl: { type: DataTypes.STRING, allowNull: true },
+    labelGeneratedAt: { type: DataTypes.DATE, allowNull: true },
+    // Most recent reason label generation failed — cleared back to null on
+    // a successful generation. Debugging/admin visibility only.
+    lastLabelError: { type: DataTypes.TEXT, allowNull: true },
+
+    // Tracks which transactional emails (see utils/email.js) have already
+    // been sent for this order, so a retry/duplicate trigger — including
+    // the future webhook phase reusing these same trigger points — never
+    // double-sends. outForDelivery/delivered aren't wired to anything yet
+    // (that's the future webhook phase) but the flags exist now so that
+    // phase doesn't need another migration.
+    emailsSent: {
+      type: DataTypes.JSONB,
+      defaultValue: { confirmed: false, packed: false, outForDelivery: false, delivered: false },
+    },
   },
   {
     tableName: "Orders",

@@ -25,6 +25,8 @@ const {
   getOrderById: getAdminOrderById,
   updateOrderStatus,
   bulkUpdateOrderStatus,
+  generateLabel,
+  downloadLabels,
 } = require("../controllers/adminOrderController");
 const { getAllCustomers, getCustomerById } = require("../controllers/adminCustomerController");
 const {
@@ -78,6 +80,12 @@ const {
   markNotificationRead,
   markAllNotificationsRead,
 } = require("../controllers/adminNotificationController");
+const {
+  getAllShippingZones,
+  createShippingZone,
+  updateShippingZone,
+  deleteShippingZone,
+} = require("../controllers/adminShippingZoneController");
 
 // --- Auth (login is the only unauthenticated admin route) ---
 router.post("/login", adminLogin);
@@ -110,6 +118,8 @@ router.get("/orders", getAllOrders);
 router.get("/orders/:id", getAdminOrderById);
 router.put("/orders/:id/status", updateOrderStatus);
 router.put("/orders/bulk-status", bulkUpdateOrderStatus);
+router.post("/orders/:id/generate-label", generateLabel);
+router.post("/orders/download-labels", downloadLabels);
 
 // --- Customers (read-only) ---
 router.get("/customers", getAllCustomers);
@@ -181,5 +191,11 @@ router.put("/web-settings", updateWebSettings);
 router.get("/notifications", getNotifications);
 router.patch("/notifications/mark-all-read", markAllNotificationsRead);
 router.patch("/notifications/:id/read", markNotificationRead);
+
+// --- Shipping Zones (checkout shipping charge — see utils/shippingZones.js) ---
+router.get("/shipping-zones", getAllShippingZones);
+router.post("/shipping-zones", createShippingZone);
+router.put("/shipping-zones/:id", updateShippingZone);
+router.delete("/shipping-zones/:id", deleteShippingZone);
 
 module.exports = router;

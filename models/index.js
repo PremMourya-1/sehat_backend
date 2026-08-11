@@ -23,6 +23,8 @@ const VerificationToken = require("./VerificationToken");
 const IntegrationSetting = require("./IntegrationSetting");
 const WebSetting = require("./WebSetting");
 const Notification = require("./Notification");
+const ShippingZone = require("./ShippingZone");
+const ShiprocketWebhookLog = require("./ShiprocketWebhookLog");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -80,6 +82,12 @@ Account.belongsTo(Customer, { foreignKey: "userId" });
 Order.hasMany(Notification, { foreignKey: "orderId", onDelete: "CASCADE" });
 Notification.belongsTo(Order, { foreignKey: "orderId" });
 
+// Order <-> ShiprocketWebhookLog (raw webhook audit trail — orderId is
+// nullable so an unmatched webhook still gets logged, hence no onDelete
+// cascade here: a log row should outlive the order it referenced).
+Order.hasMany(ShiprocketWebhookLog, { foreignKey: "orderId" });
+ShiprocketWebhookLog.belongsTo(Order, { foreignKey: "orderId" });
+
 module.exports = {
   sequelize,
   Admin,
@@ -106,4 +114,6 @@ module.exports = {
   IntegrationSetting,
   WebSetting,
   Notification,
+  ShippingZone,
+  ShiprocketWebhookLog,
 };

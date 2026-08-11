@@ -7,6 +7,7 @@ const {
 } = require("../models");
 const { encrypt, decrypt } = require("./encryption");
 const { retryAsync } = require("./retry");
+const { sendOrderPackedEmail, sendOrderOutForDeliveryEmail, sendOrderDeliveredEmail } = require("./email");
 
 const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 const INTEGRATION_KEY = "shiprocket";
@@ -118,6 +119,24 @@ async function getToken() {
   return cachedToken;
 }
 
+// Shiprocket's error bodies vary by endpoint — usually { message } but
+// sometimes { errors: { field: [...] } } for field-level validation
+// failures. Pulls out whatever's human-readable so it isn't lost.
+function extractShiprocketErrorDetail(text) {
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.message) return parsed.message;
+    if (parsed.errors && typeof parsed.errors === "object") {
+      const firstField = Object.values(parsed.errors)[0];
+      if (Array.isArray(firstField) && firstField[0]) return firstField[0];
+    }
+    return text;
+  } catch {
+    return text;
+  }
+}
+
 // Shared entry point for future Shiprocket API calls (shipments, orders,
 // AWB, tracking, ...). Attaches the cached bearer token, and if Shiprocket
 // responds 401 (token expired/invalidated), re-authenticates once and
@@ -142,7 +161,13 @@ async function authenticatedRequest(path, options = {}) {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error(`Shiprocket request failed (${res.status}) ${path}: ${text}`);
-    throw new Error(`Shiprocket request failed (${res.status})`);
+    // The specific reason (e.g. "Address 1 and Address 2 combined cannot be
+    // less than 3 characters") used to only reach the server console —
+    // folded into the thrown message here so it actually reaches
+    // lastShipmentError/lastAwbError/lastLabelError and the admin UI,
+    // instead of a bare, useless status code.
+    const detail = extractShiprocketErrorDetail(text);
+    throw new Error(detail ? `Shiprocket request failed (${res.status}): ${detail}` : `Shiprocket request failed (${res.status})`);
   }
 
   return res.json();
@@ -199,21 +224,20 @@ function parseWeightToKg(weightLabel) {
 const DEFAULT_PARCEL_CM = { length: 10, breadth: 10, height: 10 };
 const MIN_SHIPMENT_WEIGHT_KG = 0.1;
 
-// Only the two checks Phase 2 asks for. This store has no payment gateway
-// yet, so there's no separate "confirmed" order status — marking an order
-// "processing" (see adminOrderController.updateOrderStatus) is the existing
-// status transition that plays that role for COD orders today.
+// Shiprocket push is no longer gated by the admin's operational `status` —
+// it's triggered by an explicit "Generate Label" admin action instead (see
+// generateLabelAndFulfill below), which is itself the confirmation that
+// used to be implied by a pending->processing transition. The only real
+// preconditions left: a cancelled order should never ship, and a prepaid
+// order must have an actual successful payment on record.
 function validateOrderForShipment(order) {
+  if (order.status === "cancelled") {
+    return { valid: false, reason: "Order is cancelled" };
+  }
   if (order.paymentMethod === "prepaid" && order.paymentStatus !== "paid") {
     return {
       valid: false,
       reason: "Prepaid order has no successful payment record",
-    };
-  }
-  if (order.paymentMethod === "cod" && order.status !== "processing") {
-    return {
-      valid: false,
-      reason: `COD order is not confirmed yet (status is "${order.status}")`,
     };
   }
   return { valid: true };
@@ -278,7 +302,6 @@ function isRetryableShiprocketError(err) {
 // callers (the status-update hook today; an admin "retry" action or a cron
 // job later) never need to wrap this in their own try/catch.
 async function createShiprocketOrder(orderId) {
-  console.log("kr rha hu na ordr");
   const order = await Order.findByPk(orderId, {
     include: [
       {
@@ -361,17 +384,22 @@ async function getPickupPincode() {
   const data = await authenticatedRequest("/settings/company/pickup");
   const addresses = data?.data?.shipping_address || [];
   const match = addresses.find(
-    (addr) => String(addr.pickup_location || "").trim().toLowerCase() === pickupLocation.trim().toLowerCase(),
+    (addr) =>
+      String(addr.pickup_location || "")
+        .trim()
+        .toLowerCase() === pickupLocation.trim().toLowerCase(),
   );
 
   if (!match?.pin_code) {
-    throw new Error(`Could not find a pickup pincode for Shiprocket pickup location "${pickupLocation}"`);
+    throw new Error(
+      `Could not find a pickup pincode for Shiprocket pickup location "${pickupLocation}"`,
+    );
   }
   return String(match.pin_code);
 }
 
 // Returns Shiprocket's available couriers for a delivery pincode/weight/COD
-// combination, ready for selectFastestCourier(). shipmentId isn't part of
+// combination, ready for selectCheapestCourier(). shipmentId isn't part of
 // Shiprocket's serviceability contract itself (pickup/delivery pincode +
 // weight + cod are what drive it) — kept as a parameter purely so callers
 // and logs can trace which shipment a serviceability check was for.
@@ -384,7 +412,10 @@ async function checkServiceability(shipmentId, pincode, weight, codAmount) {
     cod: Number(codAmount) > 0 ? "1" : "0",
   });
 
-  const data = await authenticatedRequest(`/courier/serviceability/?${query.toString()}`, { method: "GET" });
+  const data = await authenticatedRequest(
+    `/courier/serviceability/?${query.toString()}`,
+    { method: "GET" },
+  );
   const couriers = data?.data?.available_courier_companies || [];
 
   console.log(
@@ -410,33 +441,45 @@ async function checkPincodeServiceability(
   weight = DEFAULT_CHECK_WEIGHT_KG,
   codAmount = DEFAULT_CHECK_COD_AMOUNT,
 ) {
-  const couriers = await checkServiceability("pincode-check", deliveryPincode, weight, codAmount);
+  const couriers = await checkServiceability(
+    "pincode-check",
+    deliveryPincode,
+    weight,
+    codAmount,
+  );
   return {
     serviceable: couriers.length > 0,
     codAvailable: couriers.some((courier) => Number(courier.cod) === 1),
   };
 }
 
-// Shiprocket's field name for estimated delivery time has varied across
-// response versions — check the known variants rather than assuming one.
-function getEstimatedDeliveryDays(courier) {
-  const raw =
-    courier?.estimated_delivery_days ?? courier?.etd_days ?? courier?.edd ?? courier?.estimated_delivery_time;
-  const parsed = Number(String(raw ?? "").replace(/[^\d.]/g, ""));
+// Shiprocket's field name for a courier's shipping cost has varied across
+// response versions — check the known variants rather than assuming one
+// (same defensive approach as the old getEstimatedDeliveryDays).
+function getCourierRate(courier) {
+  const raw = courier?.rate ?? courier?.freight_charge;
+  const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : Infinity;
 }
 
-function sortCouriersByFastest(courierList) {
-  return [...courierList].sort((a, b) => getEstimatedDeliveryDays(a) - getEstimatedDeliveryDays(b));
+function sortCouriersByCheapest(courierList) {
+  return [...courierList].sort((a, b) => getCourierRate(a) - getCourierRate(b));
 }
 
-// Picks the courier with the shortest estimated delivery time from a
-// checkServiceability() result.
-function selectFastestCourier(courierList) {
+// Picks the cheapest courier (by rate/freight_charge) from a
+// checkServiceability() result. Deliberately cheapest, not fastest —
+// this product line runs thin margins, so shipping cost control matters
+// more than shaving a day off delivery time (was selectFastestCourier,
+// sorted by estimated_delivery_days, until this change).
+function selectCheapestCourier(courierList) {
   if (!Array.isArray(courierList) || courierList.length === 0) {
     throw new Error("No couriers available to select from");
   }
-  return sortCouriersByFastest(courierList)[0];
+  const cheapest = sortCouriersByCheapest(courierList)[0];
+  console.log(
+    `Shiprocket: selected courier "${cheapest.courier_name || cheapest.courier_company_id}" at rate ₹${getCourierRate(cheapest)}`,
+  );
+  return cheapest;
 }
 
 // Single AWB assignment attempt against one courier. Throws on any failure
@@ -451,7 +494,10 @@ async function assignAWB(shipmentId, courierId) {
 
   const awbData = data?.response?.data;
   if (data?.awb_assign_status !== 1 || !awbData?.awb_code) {
-    const reason = (typeof awbData === "string" && awbData) || data?.message || "Shiprocket did not assign an AWB";
+    const reason =
+      (typeof awbData === "string" && awbData) ||
+      data?.message ||
+      "Shiprocket did not assign an AWB";
     throw new Error(reason);
   }
 
@@ -464,16 +510,21 @@ async function assignAWB(shipmentId, courierId) {
 
 const MAX_AWB_ATTEMPTS = 3;
 
-// Tries the fastest courier first, and on failure falls through to the
-// next-fastest — a different courier each attempt, not the same one retried
-// — stopping once one succeeds, the courier list is exhausted, or
+// Tries the cheapest courier first, and on failure falls through to the
+// next-cheapest — a different courier each attempt, not the same one
+// retried — stopping once one succeeds, the courier list is exhausted, or
 // MAX_AWB_ATTEMPTS is hit. Never throws: every outcome (success or every
 // courier failing) is recorded on the order and returned as
 // { success, error }, matching createShiprocketOrder()'s contract.
 async function assignAWBWithRetry(shipmentId, courierList) {
-  const order = await Order.findOne({ where: { shiprocketShipmentId: String(shipmentId) } });
+  const order = await Order.findOne({
+    where: { shiprocketShipmentId: String(shipmentId) },
+  });
   if (!order) {
-    return { success: false, error: `No order found for Shiprocket shipment ${shipmentId}` };
+    return {
+      success: false,
+      error: `No order found for Shiprocket shipment ${shipmentId}`,
+    };
   }
 
   if (!Array.isArray(courierList) || courierList.length === 0) {
@@ -482,7 +533,7 @@ async function assignAWBWithRetry(shipmentId, courierList) {
     return { success: false, error };
   }
 
-  const couriers = sortCouriersByFastest(courierList);
+  const couriers = sortCouriersByCheapest(courierList);
   const maxAttempts = Math.min(couriers.length, MAX_AWB_ATTEMPTS);
   const attemptedCouriers = [];
   let courierIndex = 0;
@@ -493,7 +544,9 @@ async function assignAWBWithRetry(shipmentId, courierList) {
       async () => {
         const courier = couriers[courierIndex];
         courierIndex += 1;
-        attemptedCouriers.push(courier.courier_name || courier.courier_company_id);
+        attemptedCouriers.push(
+          courier.courier_name || courier.courier_company_id,
+        );
         try {
           return await assignAWB(shipmentId, courier.courier_company_id);
         } catch (err) {
@@ -501,7 +554,11 @@ async function assignAWBWithRetry(shipmentId, courierList) {
           throw err;
         }
       },
-      { attempts: maxAttempts, delayMs: 500, shouldRetry: () => courierIndex < couriers.length },
+      {
+        attempts: maxAttempts,
+        delayMs: 500,
+        shouldRetry: () => courierIndex < couriers.length,
+      },
     );
 
     await order.update({
@@ -519,43 +576,460 @@ async function assignAWBWithRetry(shipmentId, courierList) {
     return { success: true, data: awbResult };
   } catch {
     const error = `All couriers failed (tried: ${attemptedCouriers.join(", ")}) — last error: ${lastError?.message}`;
-    console.error(`Shiprocket: AWB assignment failed for order ${order.orderNumber}: ${error}`);
+    console.error(
+      `Shiprocket: AWB assignment failed for order ${order.orderNumber}: ${error}`,
+    );
     await order.update({ awbStatus: "failed", lastAwbError: error });
     return { success: false, error };
   }
 }
 
-// Orchestrator: the full order -> shipment -> AWB pipeline in one call.
-// Runs createShiprocketOrder() first; only continues into serviceability +
-// AWB assignment if that succeeded, since a failed/skipped shipment push
-// has nothing to assign an AWB to yet. Never throws — same { success,
-// error } contract as createShiprocketOrder()/assignAWBWithRetry(), with
-// every step's outcome already recorded on the order row itself.
-async function fulfillOrderShipment(orderId) {
-  const shipmentResult = await createShiprocketOrder(orderId);
-  if (!shipmentResult.success) {
-    return shipmentResult;
+// ---------------------------------------------------------------------------
+// Phase 4 — pickup scheduling.
+// ---------------------------------------------------------------------------
+
+// Shiprocket's response field names for the confirmed pickup date have
+// varied across integrations/response versions — check the known variants
+// rather than assuming one (same defensive approach as
+// getEstimatedDeliveryDays() above).
+function getPickupDateFromResponse(data) {
+  const raw =
+    data?.response?.pickup_scheduled_date ??
+    data?.pickup_scheduled_date ??
+    data?.response?.data?.pickup_scheduled_date;
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Shiprocket's label-generation endpoint appears to auto-queue the shipment
+// for pickup as a side effect in some cases — this explicit request then
+// 400s with this exact message (confirmed from a real response body:
+// {"message":"Already in Pickup Queue.","status_code":400}). That's not a
+// failure, it's confirmation the pickup is already scheduled — matched
+// case-insensitively/substring since Shiprocket's punctuation isn't
+// guaranteed stable across responses.
+function isAlreadyInPickupQueueError(err) {
+  return /already in pickup queue/i.test(err?.message || "");
+}
+
+// Requests a courier pickup for an already-AWB-assigned shipment. Looked up
+// by shiprocketShipmentId (same lookup as assignAWBWithRetry, for
+// consistency). Never throws — every failure path (order not found, network,
+// Shiprocket rejection) is recorded on the order and returned as
+// { success: false, error }, matching createShiprocketOrder()'s contract.
+async function schedulePickup(shipmentId) {
+  const order = await Order.findOne({
+    where: { shiprocketShipmentId: String(shipmentId) },
+  });
+  if (!order) {
+    return {
+      success: false,
+      error: `No order found for Shiprocket shipment ${shipmentId}`,
+    };
   }
 
-  const order = await Order.findByPk(orderId, { include: [{ model: OrderItem }] });
-
-  let courierList;
   try {
-    const totalWeightKg = Math.max(
-      order.OrderItems.reduce((sum, item) => sum + parseWeightToKg(item.weight) * item.quantity, 0),
-      MIN_SHIPMENT_WEIGHT_KG,
+    const data = await retryAsync(
+      () =>
+        authenticatedRequest("/courier/generate/pickup", {
+          method: "POST",
+          body: JSON.stringify({ shipment_id: [Number(shipmentId)] }),
+        }),
+      { attempts: 2, delayMs: 1000, shouldRetry: isRetryableShiprocketError },
     );
-    const codAmount = order.paymentMethod === "cod" ? Number(order.total) : 0;
 
-    courierList = await checkServiceability(order.shiprocketShipmentId, order.shippingPincode, totalWeightKg, codAmount);
-    selectFastestCourier(courierList); // throws if empty, before bothering assignAWBWithRetry
+    if (data?.pickup_status !== 1) {
+      throw new Error(
+        data?.response?.data ||
+          data?.message ||
+          "Shiprocket did not confirm the pickup",
+      );
+    }
+
+    const pickupScheduledAt = new Date();
+    await order.update({
+      pickupStatus: "scheduled",
+      pickupScheduledAt,
+      pickupDate: getPickupDateFromResponse(data) || pickupScheduledAt,
+      lastPickupError: null,
+    });
+
+    console.log(
+      `Shiprocket: pickup scheduled for order ${order.orderNumber} (shipment ${shipmentId})`,
+    );
+    return { success: true, data };
   } catch (err) {
-    console.error(`Shiprocket: serviceability check failed for order ${order.orderNumber}: ${err.message}`);
-    await order.update({ awbStatus: "failed", lastAwbError: err.message });
+    if (isAlreadyInPickupQueueError(err)) {
+      // The pickup IS scheduled — just not by this call. No pickup-date info
+      // comes back on this error path (it's an error body, not the normal
+      // success payload), so pickupDate is left as whatever it already was
+      // rather than guessed at.
+      await order.update({
+        pickupStatus: "scheduled",
+        pickupScheduledAt: new Date(),
+        lastPickupError: null,
+      });
+      console.log(
+        `Shiprocket: pickup already queued for order ${order.orderNumber} (shipment ${shipmentId}) — treating as scheduled`,
+      );
+      return { success: true, data: { alreadyQueued: true } };
+    }
+
+    console.error(
+      `Shiprocket: pickup scheduling failed for order ${order.orderNumber}: ${err.message}`,
+    );
+    await order.update({
+      pickupStatus: "failed",
+      lastPickupError: err.message,
+    });
     return { success: false, error: err.message };
   }
+}
 
-  return assignAWBWithRetry(order.shiprocketShipmentId, courierList);
+// Shiprocket has no dedicated "cancel pickup" endpoint — a scheduled pickup
+// can only be aborted by cancelling the underlying order via
+// POST /orders/cancel (which Shiprocket also uses to pull any pending pickup
+// request). That's a bigger action than "undo the pickup" (it cancels the
+// shipment/order on Shiprocket's side entirely), so this is intentionally
+// not auto-wired into any flow yet — kept ready for an explicit admin
+// "cancel order" action later, at which point that's the actual desired
+// blast radius anyway. Looked up by shiprocketShipmentId for the same
+// consistency as schedulePickup()/assignAWBWithRetry().
+async function cancelPickup(shipmentId) {
+  const order = await Order.findOne({
+    where: { shiprocketShipmentId: String(shipmentId) },
+  });
+  if (!order) {
+    return {
+      success: false,
+      error: `No order found for Shiprocket shipment ${shipmentId}`,
+    };
+  }
+  if (!order.shiprocketOrderId) {
+    return {
+      success: false,
+      error: "Order has no Shiprocket order id to cancel",
+    };
+  }
+
+  try {
+    const data = await retryAsync(
+      () =>
+        authenticatedRequest("/orders/cancel", {
+          method: "POST",
+          body: JSON.stringify({ ids: [Number(order.shiprocketOrderId)] }),
+        }),
+      { attempts: 2, delayMs: 1000, shouldRetry: isRetryableShiprocketError },
+    );
+
+    if (data?.message && !/success/i.test(data.message)) {
+      throw new Error(data.message);
+    }
+
+    await order.update({ pickupStatus: "cancelled" });
+    console.log(
+      `Shiprocket: pickup/order cancelled for order ${order.orderNumber} (shipment ${shipmentId})`,
+    );
+    return { success: true, data };
+  } catch (err) {
+    console.error(
+      `Shiprocket: pickup cancellation failed for order ${order.orderNumber}: ${err.message}`,
+    );
+    return { success: false, error: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Label generation — triggered only by the admin's explicit "Generate
+// Label" action (see generateLabelAndFulfill below), never automatically.
+// ---------------------------------------------------------------------------
+
+// Shiprocket's field name for the generated label PDF URL has varied across
+// response versions — check the known variants rather than assuming one
+// (same defensive approach as getEstimatedDeliveryDays/getPickupDateFromResponse).
+function getLabelUrlFromResponse(data) {
+  return (
+    data?.label_url ||
+    data?.response?.label_url ||
+    data?.data?.label_url ||
+    null
+  );
+}
+
+// Generates a shipping label for an AWB-assigned shipment. Looked up by
+// shiprocketShipmentId (same lookup as assignAWBWithRetry/schedulePickup,
+// for consistency). Never throws — every failure path is recorded on the
+// order and returned as { success: false, error }, matching
+// createShiprocketOrder()'s contract.
+async function generateLabel(shipmentId) {
+  const order = await Order.findOne({
+    where: { shiprocketShipmentId: String(shipmentId) },
+  });
+  if (!order) {
+    return {
+      success: false,
+      error: `No order found for Shiprocket shipment ${shipmentId}`,
+    };
+  }
+
+  try {
+    const data = await retryAsync(
+      () =>
+        authenticatedRequest("/courier/generate/label", {
+          method: "POST",
+          body: JSON.stringify({ shipment_id: [Number(shipmentId)] }),
+        }),
+      { attempts: 2, delayMs: 1000, shouldRetry: isRetryableShiprocketError },
+    );
+
+    const labelUrl = getLabelUrlFromResponse(data);
+    if (data?.label_created !== 1 || !labelUrl) {
+      throw new Error(
+        data?.response?.data ||
+          data?.message ||
+          "Shiprocket did not return a label",
+      );
+    }
+
+    await order.update({
+      labelUrl,
+      labelStatus: "generated",
+      labelGeneratedAt: new Date(),
+      lastLabelError: null,
+    });
+
+    console.log(
+      `Shiprocket: label generated for order ${order.orderNumber} (shipment ${shipmentId})`,
+    );
+    return { success: true, data: { labelUrl } };
+  } catch (err) {
+    console.error(
+      `Shiprocket: label generation failed for order ${order.orderNumber}: ${err.message}`,
+    );
+    await order.update({ labelStatus: "failed", lastLabelError: err.message });
+    return { success: false, error: err.message };
+  }
+}
+
+// Orchestrator: the full order -> shipment -> AWB -> label -> pickup
+// pipeline in one call. The sole trigger point for the Shiprocket pipeline
+// — run only from the admin's explicit "Generate Label" action (see
+// adminOrderController.generateLabel), never from any order-status
+// transition. createShiprocketOrder/checkServiceability/assignAWBWithRetry
+// are called as-is, unmodified.
+//
+// Each step is skipped (not re-run) if the order already has it recorded —
+// createShiprocketOrder/assignAWB have no idempotency guard of their own,
+// so re-running a completed step here would push Shiprocket again. This
+// makes clicking "Generate Label" again after a partial failure safe: it
+// resumes from whichever step actually failed instead of redoing
+// everything. Pickup scheduling is the exception — always re-attempted,
+// since re-requesting a pickup is safe. Never throws — same { success,
+// error } contract as every step it calls, with every step's outcome
+// already recorded on the order row itself.
+async function generateLabelAndFulfill(orderId) {
+  const existingOrder = await Order.findByPk(orderId, {
+    include: [{ model: OrderItem }],
+  });
+  if (!existingOrder) {
+    return { success: false, error: "Order not found" };
+  }
+
+  if (existingOrder.shipmentStatus !== "created") {
+    const shipmentResult = await createShiprocketOrder(orderId);
+    if (!shipmentResult.success) {
+      return shipmentResult;
+    }
+  }
+
+  const order = await Order.findByPk(orderId, {
+    include: [{ model: OrderItem }],
+  });
+
+  if (order.awbStatus !== "assigned") {
+    let courierList;
+    try {
+      const totalWeightKg = Math.max(
+        order.OrderItems.reduce(
+          (sum, item) => sum + parseWeightToKg(item.weight) * item.quantity,
+          0,
+        ),
+        MIN_SHIPMENT_WEIGHT_KG,
+      );
+      const codAmount = order.paymentMethod === "cod" ? Number(order.total) : 0;
+
+      courierList = await checkServiceability(
+        order.shiprocketShipmentId,
+        order.shippingPincode,
+        totalWeightKg,
+        codAmount,
+      );
+      selectCheapestCourier(courierList); // throws if empty, before bothering assignAWBWithRetry
+    } catch (err) {
+      console.error(
+        `Shiprocket: serviceability check failed for order ${order.orderNumber}: ${err.message}`,
+      );
+      await order.update({ awbStatus: "failed", lastAwbError: err.message });
+      return { success: false, error: err.message };
+    }
+
+    const awbResult = await assignAWBWithRetry(
+      order.shiprocketShipmentId,
+      courierList,
+    );
+    if (!awbResult.success) {
+      return awbResult;
+    }
+  }
+
+  if (order.labelStatus !== "generated") {
+    const labelResult = await generateLabel(order.shiprocketShipmentId);
+    if (!labelResult.success) {
+      return labelResult;
+    }
+
+    await order.update({ customerStatus: "dispatched" });
+    sendOrderPackedEmail(order.id).catch((err) =>
+      console.error(
+        `Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
+      ),
+    );
+  }
+
+  return schedulePickup(order.shiprocketShipmentId);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — inbound status webhooks (POST /api/webhooks/shiprocket, see
+// controllers/webhookController.js shiprocketWebhook).
+// ---------------------------------------------------------------------------
+
+// Same DB-first pattern as getCredentials()/getPickupLocation() above, but
+// no .env fallback — this is a brand-new secret with nothing to migrate
+// from, so an unconfigured webhook should fail closed (reject every
+// request) rather than silently accept anything.
+async function getWebhookSecret() {
+  const setting = await IntegrationSetting.findOne({ where: { integrationKey: INTEGRATION_KEY } });
+  const secret = setting?.config?.webhookSecret;
+  if (!secret) {
+    throw new Error(
+      "Shiprocket webhook secret is not configured — set it up from the admin panel (Settings > Integrations > Shiprocket)",
+    );
+  }
+  return decrypt(secret);
+}
+
+// Shiprocket's published status-term glossary (support.shiprocket.in —
+// "Important Terms All Shiprocket Users Should Know"), matched
+// case-insensitively since their casing isn't guaranteed stable across
+// payloads. Every RTO sub-status (RTO Initiated, RTO-OFD, RTO Delivered,
+// RTO Acknowledged, RTO Rejected, RTO-NDR) and "Disposed Of" all fold into
+// a single "rto" value — the app doesn't need to distinguish which RTO
+// stage a shipment is in, just that it's being returned. Statuses with no
+// entry here (Pickup Exception, Undelivered/NDR, Delayed, Misrouted,
+// weight-discrepancy statuses, return-order statuses, ...) are logged and
+// left alone rather than guessed at — see handleShiprocketStatusWebhook.
+const STATUS_MAP = [
+  { pattern: /^picked[\s-]?up$/i, customerStatus: "picked_up" },
+  { pattern: /^(shipped|in[\s-]?transit|reached[\s-]?at[\s-]?destination[\s-]?hub)$/i, customerStatus: "in_transit" },
+  { pattern: /^out[\s-]?for[\s-]?delivery$/i, customerStatus: "out_for_delivery" },
+  { pattern: /^delivered$/i, customerStatus: "delivered" },
+  { pattern: /^(rto|disposed[\s-]?of)/i, customerStatus: "rto" },
+];
+
+function mapShiprocketStatus(currentStatus) {
+  const normalized = String(currentStatus || "").trim();
+  const match = STATUS_MAP.find((entry) => entry.pattern.test(normalized));
+  return match?.customerStatus || null;
+}
+
+// The linear "happy path" — used to guard against a late/duplicate webhook
+// moving customerStatus *backward* (Shiprocket can retry a delivery, and
+// events aren't guaranteed to arrive in order). "rto" is deliberately not
+// in this list: it's a separate terminal branch that can follow any of
+// these (a shipment can be returned after already being "out for
+// delivery"), not a step along the happy path, and nothing moves a
+// shipment forward again once it's "rto".
+const STATUS_PROGRESSION = ["confirmed", "dispatched", "picked_up", "in_transit", "out_for_delivery", "delivered"];
+
+function isForwardProgress(currentCustomerStatus, nextCustomerStatus) {
+  if (nextCustomerStatus === "rto") return currentCustomerStatus !== "rto";
+  if (currentCustomerStatus === "rto") return false;
+  const currentIndex = STATUS_PROGRESSION.indexOf(currentCustomerStatus);
+  const nextIndex = STATUS_PROGRESSION.indexOf(nextCustomerStatus);
+  if (currentIndex === -1 || nextIndex === -1) return true; // unrecognized current value — don't block
+  return nextIndex > currentIndex;
+}
+
+// Processes one Shiprocket status webhook event: maps the status, applies
+// it to the matching order, and fires whichever Step B email that
+// transition corresponds to. Looked up by shiprocketShipmentId first
+// (matching every other lookup in this file), falling back to
+// shiprocketOrderId in case a given payload only carries one or the other.
+// Idempotent — a duplicate/retried event (same status, or one already
+// superseded) is a no-op, same "already applied is still success" contract
+// as utils/markOrderPaid.js. Never throws — same { success, error }
+// contract as every step above. Called from controllers/webhookController.js,
+// which verifies the webhook secret and persists the raw payload
+// (ShiprocketWebhookLog) before this runs.
+async function handleShiprocketStatusWebhook(payload) {
+  const shipmentId = payload?.shipment_id;
+  const shiprocketOrderId = payload?.order_id;
+  const rawStatus = payload?.current_status ?? payload?.shipment_status;
+
+  const order = shipmentId
+    ? await Order.findOne({ where: { shiprocketShipmentId: String(shipmentId) } })
+    : shiprocketOrderId
+      ? await Order.findOne({ where: { shiprocketOrderId: String(shiprocketOrderId) } })
+      : null;
+
+  if (!order) {
+    const error = `No order found for Shiprocket shipment/order (shipment_id=${shipmentId}, order_id=${shiprocketOrderId})`;
+    console.error(`Shiprocket webhook: ${error}`);
+    return { success: false, error, orderId: null };
+  }
+
+  const nextStatus = mapShiprocketStatus(rawStatus);
+  if (!nextStatus) {
+    console.log(
+      `Shiprocket webhook: unrecognized/non-actionable status "${rawStatus}" for order ${order.orderNumber} — logged, no customerStatus change`,
+    );
+    return { success: true, orderId: order.id, skipped: true, reason: "unrecognized or non-actionable status" };
+  }
+
+  if (!isForwardProgress(order.customerStatus, nextStatus)) {
+    console.log(
+      `Shiprocket webhook: order ${order.orderNumber} already at or past "${nextStatus}" (currently "${order.customerStatus}") — ignoring stale/duplicate event`,
+    );
+    return { success: true, orderId: order.id, skipped: true, reason: "already applied" };
+  }
+
+  await order.update({ customerStatus: nextStatus });
+  console.log(`Shiprocket webhook: order ${order.orderNumber} customerStatus -> ${nextStatus} (raw status: "${rawStatus}")`);
+
+  // "picked_up" also fires the "Order Packed" email — the real pickup-scan
+  // event Step B originally wanted, running alongside (not replacing) the
+  // label-generation-time fallback in generateLabelAndFulfill above, since
+  // both are guarded by the same emailsSent.packed flag: whichever fires
+  // first wins, and webhook delivery isn't guaranteed (not yet configured,
+  // or a delivery hiccup on Shiprocket's side), so the fallback stays as a
+  // safety net rather than being replaced outright.
+  if (nextStatus === "picked_up") {
+    sendOrderPackedEmail(order.id).catch((err) =>
+      console.error(`Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+  } else if (nextStatus === "out_for_delivery") {
+    sendOrderOutForDeliveryEmail(order.id).catch((err) =>
+      console.error(`Email: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+  } else if (nextStatus === "delivered") {
+    sendOrderDeliveredEmail(order.id).catch((err) =>
+      console.error(`Email: delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+  }
+
+  return { success: true, orderId: order.id, customerStatus: nextStatus };
 }
 
 module.exports = {
@@ -566,8 +1040,14 @@ module.exports = {
   createShiprocketOrder,
   checkServiceability,
   checkPincodeServiceability,
-  selectFastestCourier,
+  selectCheapestCourier,
   assignAWBWithRetry,
-  fulfillOrderShipment,
+  schedulePickup,
+  cancelPickup,
+  generateLabel,
+  generateLabelAndFulfill,
   parseWeightToKg,
+  getWebhookSecret,
+  mapShiprocketStatus,
+  handleShiprocketStatusWebhook,
 };

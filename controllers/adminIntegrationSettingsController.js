@@ -11,7 +11,8 @@ const shiprocket = require("../utils/shiprocket");
 // its own dedicated controller/routes now — see
 // adminRazorpaySettingsController.js and routes/adminRoutes.js.
 const SENSITIVE_FIELDS = {
-  shiprocket: ["password"],
+  shiprocket: ["password", "webhookSecret"],
+  resend: ["apiKey"],
 };
 
 // Called right after an integration's settings are saved, so anything

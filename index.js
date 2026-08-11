@@ -29,7 +29,7 @@ const blogRoutes = require("./routes/blogRoutes");
 const faqRoutes = require("./routes/faqRoutes");
 const newsletterRoutes = require("./routes/newsletterRoutes");
 const errorHandler = require("./middleware/errorHandler");
-const { CmsPage, ComboOffer, BlogPost, Faq } = require("./models");
+const { CmsPage, ComboOffer, BlogPost, Faq, ShippingZone } = require("./models");
 
 const app = express();
 
@@ -170,6 +170,70 @@ const seedStarterContent = async () => {
     { question: "Is Cash on Delivery (COD) available?", answer: "Yes, COD is available on most pin codes. You'll see COD availability at checkout based on your delivery address." },
     { question: "Can I subscribe for repeat orders?", answer: "Yes — use Subscribe & Save on any product to get it delivered automatically every 2 or 4 weeks, with an extra discount." },
   ]);
+
+  await seedShippingZones();
+};
+
+// Starting defaults only — fully editable by the admin afterward from
+// Settings > Shipping Zones. Rajasthan is "same state" since that's where
+// the pickup location is (see utils/shiprocket.js getPickupLocation).
+const DEFAULT_SHIPPING_ZONES = [
+  { zoneName: "Same State", states: ["Rajasthan"], shippingCharge: 40 },
+  {
+    zoneName: "Nearby States",
+    states: ["Gujarat", "Madhya Pradesh", "Haryana", "Punjab", "Uttar Pradesh", "Delhi", "Chandigarh"],
+    shippingCharge: 60,
+  },
+  {
+    zoneName: "Rest of India",
+    states: [
+      "Andhra Pradesh",
+      "Bihar",
+      "Chhattisgarh",
+      "Goa",
+      "Himachal Pradesh",
+      "Jharkhand",
+      "Karnataka",
+      "Kerala",
+      "Maharashtra",
+      "Odisha",
+      "Tamil Nadu",
+      "Telangana",
+      "Uttarakhand",
+      "West Bengal",
+      "Puducherry",
+      "Dadra and Nagar Haveli and Daman and Diu",
+    ],
+    shippingCharge: 80,
+  },
+  {
+    zoneName: "North-East & Remote",
+    states: [
+      "Arunachal Pradesh",
+      "Assam",
+      "Manipur",
+      "Meghalaya",
+      "Mizoram",
+      "Nagaland",
+      "Tripura",
+      "Sikkim",
+      "Jammu and Kashmir",
+      "Ladakh",
+      "Andaman and Nicobar Islands",
+      "Lakshadweep",
+    ],
+    shippingCharge: 100,
+  },
+];
+
+// Only runs if the table is empty, same as seedIfEmpty above — but kept
+// separate since ShippingZone has no sortOrder column for that helper's
+// sortOrder-per-row assumption to apply to.
+const seedShippingZones = async () => {
+  if ((await ShippingZone.count()) > 0) return;
+  for (const zone of DEFAULT_SHIPPING_ZONES) {
+    await ShippingZone.create(zone);
+  }
 };
 
 const startServer = async () => {

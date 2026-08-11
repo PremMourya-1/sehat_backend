@@ -9,6 +9,8 @@ const { resolvePincodeLocation } = require("../utils/pincodeResolver");
 const { getCodAvailability } = require("../utils/checkCodAvailability");
 const { createRazorpayOrder, getRazorpayCredentials } = require("../utils/razorpay");
 const { emitNewOrder } = require("../utils/socket");
+const { sendOrderConfirmedEmail } = require("../utils/email");
+const { getShippingCharge } = require("../utils/shippingZones");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
 const MIN_ORDER_WEIGHT_KG = 0.1;
@@ -66,7 +68,18 @@ exports.createOrder = asyncHandler(async (req, res) => {
     appliedCoupon = couponResult.coupon;
   }
 
-  const total = Number((subtotal - discountAmount).toFixed(2));
+  // Resolved early (moved ahead of the serviceability check below) since
+  // shippingCharge — derived from the resolved state, see
+  // utils/shippingZones.js — has to be folded into `total` before that
+  // check runs, not just before the order is created; `total` doubles as
+  // the COD-amount estimate Shiprocket's serviceability call uses.
+  const location = await resolvePincodeLocation(shippingPincode);
+  if (!location) {
+    return sendError(res, "Could not verify this pincode — please check and try again", 400);
+  }
+
+  const shippingCharge = await getShippingCharge(location.state);
+  const total = Number((subtotal - discountAmount + shippingCharge).toFixed(2));
 
   // Validate stock availability before committing the order.
   for (const line of lineItems) {
@@ -86,11 +99,6 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const serviceability = await checkPincodeServiceability(shippingPincode, totalWeightKg, total);
   if (!serviceability.serviceable) {
     return sendError(res, "Sorry, delivery isn't available to this pincode", 400);
-  }
-
-  const location = await resolvePincodeLocation(shippingPincode);
-  if (!location) {
-    return sendError(res, "Could not verify this pincode — please check and try again", 400);
   }
 
   // Defense in depth again: checkout only shows COD as selectable when it's
@@ -116,6 +124,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
           customerId: req.customer.id,
           subtotal,
           discountAmount,
+          shippingCharge,
           couponCode: appliedCoupon ? appliedCoupon.code : null,
           total,
           paymentMethod,
@@ -188,6 +197,9 @@ exports.createOrder = asyncHandler(async (req, res) => {
   // later, only once payment is actually verified (see checkoutController).
   if (paymentMethod === "cod") {
     emitNewOrder(fullOrder).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+    sendOrderConfirmedEmail(fullOrder.id).catch((err) =>
+      console.error(`Email: order-confirmed send threw unexpectedly for order ${fullOrder.orderNumber}: ${err.message}`),
+    );
   }
 
   return sendSuccess(res, { ...fullOrder.toJSON(), razorpay: razorpayInit }, "Order placed successfully", 201);
