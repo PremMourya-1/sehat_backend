@@ -73,7 +73,7 @@ exports.razorpayWebhook = asyncHandler(async (req, res) => {
 // entirely within our own control regardless of what Shiprocket does.
 const SHIPROCKET_WEBHOOK_HEADER = "x-api-key";
 
-// POST /api/webhooks/shiprocket — public, no admin auth; Shiprocket calls
+// POST /api/webhooks/courier-updates — public, no admin auth; Shiprocket calls
 // this directly (see utils/shiprocket.js getWebhookSecret/
 // handleShiprocketStatusWebhook, and models/ShiprocketWebhookLog.js for the
 // raw audit trail). Every verified request is logged before processing, so

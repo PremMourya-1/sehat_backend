@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.live
 uploads/*
 !uploads/.gitkeep
 npm-debug.log*

@@ -901,7 +901,7 @@ async function generateLabelAndFulfill(orderId) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 7 — inbound status webhooks (POST /api/webhooks/shiprocket, see
+// Phase 7 — inbound status webhooks (POST /api/webhooks/courier-updates, see
 // controllers/webhookController.js shiprocketWebhook).
 // ---------------------------------------------------------------------------
 

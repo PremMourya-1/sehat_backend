@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "dev:live": "cross-env DB_MODE=live nodemon index.js",
     "seed:admin": "node utils/seedAdmin.js",
     "seed:catalog": "node utils/seedCatalog.js",
     "lint": "eslint ."
@@ -29,6 +30,7 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "eslint": "^8.57.0",
     "nodemon": "^3.1.14"
   }

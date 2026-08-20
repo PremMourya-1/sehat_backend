@@ -6,6 +6,14 @@ const morgan = require("morgan");
 const helmet = require("helmet");
 require("dotenv").config();
 
+// DB_MODE=live (see package.json's "dev:live" script) re-points just the DB
+// connection at the production database, on top of the normal local .env —
+// everything else (port, JWT secret, CORS origins, ...) still comes from
+// .env, only DATABASE_URL is overridden.
+if (process.env.DB_MODE === "live") {
+  require("dotenv").config({ path: ".env.live", override: true });
+}
+
 const { sequelize, connectDB } = require("./config/db");
 require("./models");
 const { initSocket } = require("./utils/socket");
@@ -239,10 +247,20 @@ const seedShippingZones = async () => {
 const startServer = async () => {
   try {
     await connectDB();
-    await sequelize.sync({ alter: true });
-    console.log("Database synced");
-    await seedCmsPages();
-    await seedStarterContent();
+
+    // DB_MODE=live is for viewing/working with production data from a local
+    // dev server — never run schema-altering sync or starter-content seeding
+    // against production from here. Local dev (the default) keeps doing both,
+    // same as before.
+    if (process.env.DB_MODE === "live") {
+      console.log("DB_MODE=live — skipping sync/seed, connected read/write to production data as-is");
+    } else {
+      await sequelize.sync({ alter: true });
+      console.log("Database synced");
+      await seedCmsPages();
+      await seedStarterContent();
+    }
+
     const PORT = process.env.PORT || 4000;
     const httpServer = http.createServer(app);
     initSocket(httpServer);
