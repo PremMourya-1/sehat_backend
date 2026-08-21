@@ -192,6 +192,22 @@ async function createRazorpayOrder({ amount, receipt, notes }) {
   });
 }
 
+// amount is in rupees, same convention as createRazorpayOrder above —
+// converted to paise here. Used by utils/orderCancellation.js for a
+// prepaid+paid order's cancellation refund. Razorpay's response `status` is
+// "processed" for an instant refund or "pending" if it needs manual
+// processing on their end — the caller maps that onto Order.refundStatus,
+// this just returns Razorpay's raw response.
+async function createRefund({ paymentId, amount, notes }) {
+  return razorpayRequest(`/payments/${paymentId}/refund`, {
+    method: "POST",
+    body: JSON.stringify({
+      amount: Math.round(Number(amount) * 100),
+      notes,
+    }),
+  });
+}
+
 // Timing-safe HMAC comparison — same approach as middleware/internalAuth.js's
 // shared-secret check, just with crypto.createHmac output instead of a
 // static secret.
@@ -234,6 +250,7 @@ module.exports = {
   getRazorpayCredentials,
   getRazorpayWebhookSecret,
   createRazorpayOrder,
+  createRefund,
   verifyPaymentSignature,
   verifyWebhookSignature,
 };

@@ -10,8 +10,20 @@ const { getRazorpayCredentials, verifyPaymentSignature } = require("../utils/raz
 const { markOrderPaid } = require("../utils/markOrderPaid");
 const { emitNewOrder } = require("../utils/socket");
 const { sendOrderConfirmedEmail } = require("../utils/email");
+const { getSiteSettings } = require("../utils/webSettings");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
+
+// GET /api/checkout/config — public, no auth (read before the customer is
+// necessarily even logged in, same as check-pincode above). Currently just
+// the mobile-verification toggle (see utils/webSettings.js) — the
+// checkout page reads this to decide whether to show the OTP-verify-your-
+// mobile gate (Components/Checkout/MobileVerification.js) at all before
+// the shipping form, or skip straight to it.
+exports.getCheckoutConfig = asyncHandler(async (req, res) => {
+  const settings = await getSiteSettings();
+  return sendSuccess(res, { mobileVerificationRequired: settings.mobileVerificationRequired });
+});
 
 // GET /api/checkout/check-pincode?pincode=XXXXXX — public, no auth. Used by
 // the product page's "Check delivery" widget AND checkout's Step 1 (see

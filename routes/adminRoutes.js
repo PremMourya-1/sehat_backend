@@ -28,6 +28,7 @@ const {
   generateLabel,
   downloadLabels,
   simulateStatusUpdate,
+  cancelOrder,
 } = require("../controllers/adminOrderController");
 const { getAllCustomers, getCustomerById } = require("../controllers/adminCustomerController");
 const {
@@ -122,6 +123,7 @@ router.put("/orders/bulk-status", bulkUpdateOrderStatus);
 router.post("/orders/:id/generate-label", generateLabel);
 router.post("/orders/download-labels", downloadLabels);
 router.post("/orders/:id/simulate-status", simulateStatusUpdate);
+router.post("/orders/:id/cancel", cancelOrder);
 
 // --- Customers (read-only) ---
 router.get("/customers", getAllCustomers);

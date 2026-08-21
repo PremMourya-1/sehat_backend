@@ -50,6 +50,9 @@ const Order = sequelize.define(
     // (see utils/shiprocket.js handleShiprocketStatusWebhook) — "rto" covers
     // every Return-to-Origin sub-status Shiprocket sends (RTO Initiated,
     // RTO Delivered, RTO Acknowledged, ...), not tracked as separate values.
+    // "cancelled" is a terminal branch like "rto" — see
+    // utils/orderCancellation.js and isForwardProgress() in
+    // utils/shiprocket.js, which blocks any further status change once set.
     customerStatus: {
       type: DataTypes.ENUM(
         "confirmed",
@@ -59,11 +62,35 @@ const Order = sequelize.define(
         "out_for_delivery",
         "delivered",
         "rto",
+        "cancelled",
       ),
       defaultValue: "confirmed",
     },
+    // Cancellation — see utils/orderCancellation.js finalizeCancellation(),
+    // called from both the customer-initiated (orderController.cancelOrder,
+    // only while customerStatus === "confirmed") and admin-initiated
+    // (adminOrderController.cancelOrder, any status) cancel endpoints.
+    cancelledAt: { type: DataTypes.DATE, allowNull: true },
+    cancelledBy: { type: DataTypes.ENUM("customer", "admin"), allowNull: true },
+    cancellationReason: { type: DataTypes.TEXT, allowNull: true },
+    // Refund tracking for prepaid+paid orders that get cancelled (see
+    // utils/razorpay.js createRefund) — stays "not_applicable" for every COD
+    // order and every prepaid order that was never actually paid (nothing
+    // to refund in either case).
+    refundStatus: {
+      type: DataTypes.ENUM("not_applicable", "pending", "completed", "failed"),
+      defaultValue: "not_applicable",
+    },
+    refundedAt: { type: DataTypes.DATE, allowNull: true },
+    refundAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     shippingName: { type: DataTypes.STRING, allowNull: true },
     shippingPhone: { type: DataTypes.STRING, allowNull: true },
+    // Optional second contact number for delivery — e.g. a family member's
+    // number in case the primary shippingPhone is unreachable. Plain text,
+    // no OTP verification (same as shippingPhone) — see mobileVerification-
+    // Required in utils/webSettings.js for the separate, account-level
+    // OTP-verified Customer.mobileNumber.
+    alternateMobile: { type: DataTypes.STRING, allowNull: true, validate: { is: /^[0-9]{10}$/ } },
     shippingAddress: { type: DataTypes.STRING, allowNull: true },
     shippingCity: { type: DataTypes.STRING, allowNull: true },
     shippingState: { type: DataTypes.STRING, allowNull: true },
@@ -147,7 +174,7 @@ const Order = sequelize.define(
     // phase doesn't need another migration.
     emailsSent: {
       type: DataTypes.JSONB,
-      defaultValue: { confirmed: false, packed: false, outForDelivery: false, delivered: false },
+      defaultValue: { confirmed: false, packed: false, outForDelivery: false, delivered: false, cancelled: false },
     },
   },
   {

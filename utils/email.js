@@ -144,6 +144,23 @@ function buildOrderDeliveredHtml(order) {
   `;
 }
 
+function buildOrderCancelledHtml(order) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #F5EDE0; border-radius: 12px;">
+      <h2 style="color: #2E4A3B; margin-bottom: 4px;">Sehat Potli</h2>
+      <p style="color: #2A2A28; font-size: 15px;">
+        Your order <strong>${order.orderNumber}</strong> has been cancelled.
+      </p>
+      ${
+        order.refundStatus === "pending" || order.refundStatus === "completed"
+          ? `<p style="color: #2A2A28; font-size: 13px;">A refund of ${formatCurrencyINR(order.refundAmount)} has been initiated to your original payment method and should reflect within a few business days.</p>`
+          : ""
+      }
+      <p style="color: #C89B3C; font-size: 13px; margin-top: 24px;">Team Sehat Potli — Pure. Natural. Wholesome.</p>
+    </div>
+  `;
+}
+
 const orderIncludesForEmail = [
   { model: OrderItem, include: [{ model: Product, attributes: ["id", "name"] }] },
   { model: Customer, attributes: ["id", "email"] },
@@ -234,10 +251,33 @@ async function sendOrderDeliveredEmail(orderId) {
   }
 }
 
+// Sends the "Order Cancelled" email — triggered from
+// utils/orderCancellation.js finalizeCancellation(), after the order's
+// customerStatus/refund fields are already updated (so refundStatus/
+// refundAmount here reflect the real outcome, not a guess). Same
+// never-throws, flag-guarded contract as the senders above.
+async function sendOrderCancelledEmail(orderId) {
+  const order = await Order.findByPk(orderId, { include: orderIncludesForEmail });
+  if (!order) return { success: false, error: "Order not found" };
+  if (order.emailsSent?.cancelled) return { success: true, skipped: true };
+
+  try {
+    if (!order.Customer?.email) throw new Error("Order has no customer email on file");
+    await sendEmail(order.Customer.email, `Order Cancelled — ${order.orderNumber}`, buildOrderCancelledHtml(order));
+    await order.update({ emailsSent: { ...(order.emailsSent || {}), cancelled: true } });
+    console.log(`Email: order-cancelled sent for order ${order.orderNumber}`);
+    return { success: true };
+  } catch (err) {
+    console.error(`Email: failed to send order-cancelled email for order ${order.orderNumber}: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
 module.exports = {
   sendEmail,
   sendOrderConfirmedEmail,
   sendOrderPackedEmail,
   sendOrderOutForDeliveryEmail,
   sendOrderDeliveredEmail,
+  sendOrderCancelledEmail,
 };

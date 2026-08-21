@@ -11,6 +11,7 @@ const { createRazorpayOrder, getRazorpayCredentials } = require("../utils/razorp
 const { emitNewOrder } = require("../utils/socket");
 const { sendOrderConfirmedEmail } = require("../utils/email");
 const { getShippingCharge } = require("../utils/shippingZones");
+const { finalizeCancellation } = require("../utils/orderCancellation");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
 const MIN_ORDER_WEIGHT_KG = 0.1;
@@ -23,9 +24,12 @@ const orderItemIncludes = [
   },
 ];
 
+const MOBILE_REGEX = /^[0-9]{10}$/;
+
 // POST /api/orders
 // body: { items: [{ variantId, quantity }], couponCode?, shippingName, shippingPhone,
-//         shippingAddress, shippingPincode, paymentMethod? ("cod" | "prepaid", defaults to "cod") }
+//         alternateMobile?, shippingAddress, shippingPincode,
+//         paymentMethod? ("cod" | "prepaid", defaults to "cod") }
 // shippingCity/shippingState are never taken from the client — the customer
 // only ever enters/confirms a pincode (checked up front on the product page,
 // see checkoutController.checkPincode); city/state are resolved server-side
@@ -36,6 +40,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
     couponCode,
     shippingName,
     shippingPhone,
+    alternateMobile,
     shippingAddress,
     shippingPincode,
     paymentMethod = "cod",
@@ -49,6 +54,9 @@ exports.createOrder = asyncHandler(async (req, res) => {
   }
   if (!PINCODE_REGEX.test(shippingPincode)) {
     return sendError(res, "A valid 6-digit pincode is required", 400);
+  }
+  if (alternateMobile && !MOBILE_REGEX.test(alternateMobile)) {
+    return sendError(res, "Alternate mobile number must be a valid 10-digit number", 400);
   }
   if (!PAYMENT_METHODS.includes(paymentMethod)) {
     return sendError(res, `paymentMethod must be one of: ${PAYMENT_METHODS.join(", ")}`, 400);
@@ -130,6 +138,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
           paymentMethod,
           shippingName,
           shippingPhone,
+          alternateMobile: alternateMobile || null,
           shippingAddress,
           shippingCity: location.city,
           shippingState: location.state,
@@ -257,4 +266,35 @@ exports.getOrderById = asyncHandler(async (req, res) => {
 
   const trackingUrl = order.awbCode ? `https://shiprocket.co/tracking/${order.awbCode}` : null;
   return sendSuccess(res, { ...order.toJSON(), trackingUrl });
+});
+
+// POST /api/orders/:id/cancel  { reason? }
+// Customer self-cancel — only while customerStatus is still "confirmed",
+// i.e. before admin's "Generate Label" action has pushed the order to
+// Shiprocket at all. Once dispatched, a courier is already involved, so
+// self-cancel is intentionally no longer offered (the customer needs to
+// contact support instead) — re-validated here server-side, never trusted
+// from whatever the frontend's button visibility already implied.
+exports.cancelOrder = asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+
+  const order = await Order.findOne({ where: { id: req.params.id, customerId: req.customer.id } });
+  if (!order) return sendError(res, "Order not found", 404);
+
+  if (order.customerStatus !== "confirmed") {
+    return sendError(
+      res,
+      order.customerStatus === "cancelled"
+        ? "This order is already cancelled"
+        : "This order can no longer be self-cancelled — please contact support",
+      400,
+    );
+  }
+
+  const cancelled = await finalizeCancellation(order.id, {
+    cancelledBy: "customer",
+    cancellationReason: reason ? String(reason).trim() : null,
+  });
+
+  return sendSuccess(res, cancelled, "Order cancelled successfully");
 });

@@ -230,8 +230,13 @@ const MIN_SHIPMENT_WEIGHT_KG = 0.1;
 // used to be implied by a pending->processing transition. The only real
 // preconditions left: a cancelled order should never ship, and a prepaid
 // order must have an actual successful payment on record.
+//
+// Checks customerStatus, not the vestigial `status` field above — `status`
+// has no live UI control and nothing ever actually sets it to "cancelled";
+// customerStatus is the field cancellation (see utils/orderCancellation.js)
+// really sets, and the one every other status check in this codebase reads.
 function validateOrderForShipment(order) {
-  if (order.status === "cancelled") {
+  if (order.customerStatus === "cancelled") {
     return { valid: false, reason: "Order is cancelled" };
   }
   if (order.paymentMethod === "prepaid" && order.paymentStatus !== "paid") {
@@ -954,6 +959,11 @@ function mapShiprocketStatus(currentStatus) {
 const STATUS_PROGRESSION = ["confirmed", "dispatched", "picked_up", "in_transit", "out_for_delivery", "delivered"];
 
 function isForwardProgress(currentCustomerStatus, nextCustomerStatus) {
+  // Cancellation is terminal from every direction — once a webhook/simulator
+  // sees a cancelled order, nothing (a late courier-status event included)
+  // is allowed to move it anywhere else. Checked before the "rto" branch
+  // below since it applies regardless of what nextCustomerStatus is.
+  if (currentCustomerStatus === "cancelled") return false;
   if (nextCustomerStatus === "rto") return currentCustomerStatus !== "rto";
   if (currentCustomerStatus === "rto") return false;
   const currentIndex = STATUS_PROGRESSION.indexOf(currentCustomerStatus);
