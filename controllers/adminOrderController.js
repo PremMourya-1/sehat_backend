@@ -1,8 +1,33 @@
 const { PDFDocument } = require("pdf-lib");
-const { Order, OrderItem, Product, Customer } = require("../models");
+const { Order, OrderItem, Product, Customer, ShiprocketWebhookLog } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
-const { generateLabelAndFulfill } = require("../utils/shiprocket");
+const { generateLabelAndFulfill, processStatusUpdate } = require("../utils/shiprocket");
+
+// Target customerStatus values the admin test simulator can drive an order
+// to, mapped to one representative *raw* Shiprocket status string each —
+// processStatusUpdate() runs the exact same mapShiprocketStatus() regex
+// matching a real webhook payload would, so these strings are picked to
+// match utils/shiprocket.js's STATUS_MAP patterns, not just be readable.
+// "confirmed"/"dispatched" aren't included — those are set elsewhere
+// (order creation, label generation), never by a status webhook/simulation.
+const SIMULATABLE_STATUSES = {
+  picked_up: "Picked Up",
+  in_transit: "In Transit",
+  out_for_delivery: "Out for Delivery",
+  delivered: "Delivered",
+  rto: "RTO Initiated",
+};
+
+// Friendly names for the "which email was triggered" note in the admin UI —
+// deliberately not reusing CUSTOMER_STATUS_LABELS (that's the *status*
+// label; this is the *email* name, a different vocabulary that happens to
+// overlap for two of these three).
+const EMAIL_LABELS = {
+  "order-packed": "Order Packed",
+  "out-for-delivery": "Out for Delivery",
+  delivered: "Delivered",
+};
 
 const ALLOWED_STATUSES = [
   "pending",
@@ -160,4 +185,57 @@ exports.downloadLabels = asyncHandler(async (req, res) => {
   res.setHeader("X-Labels-Merged", String(orders.length - failed.length));
   res.setHeader("X-Labels-Failed", String(failed.length));
   return res.send(Buffer.from(mergedBytes));
+});
+
+// POST /api/admin/orders/:id/simulate-status  { status }
+//
+// Internal testing tool only — see shiprocket-configuration.md "Admin Test
+// Status Simulator". Drives the order through the exact same
+// processStatusUpdate() the real Shiprocket webhook uses (status mapping,
+// forward-only guard, email trigger) so this tests the real code path
+// rather than a separate reimplementation of it — just addressed directly
+// by orderId instead of resolving one from a shipment/order-id lookup, so
+// it works on ANY order, including one never pushed to Shiprocket at all
+// (awbCode/courierName stay null in that case, which the admin UI handles).
+// Bypasses webhook signature verification entirely — that verification
+// exists to authenticate an *external* caller, and this route is already
+// behind adminAuth (see routes/adminRoutes.js), so it doesn't apply here.
+exports.simulateStatusUpdate = asyncHandler(async (req, res) => {
+  const { status } = req.body;
+  const rawStatus = SIMULATABLE_STATUSES[status];
+  if (!rawStatus) {
+    return sendError(res, `status must be one of: ${Object.keys(SIMULATABLE_STATUSES).join(", ")}`, 400);
+  }
+
+  const order = await Order.findByPk(req.params.id);
+  if (!order) return sendError(res, "Order not found", 404);
+
+  const result = await processStatusUpdate(order.id, rawStatus);
+
+  // Logged the same as a real webhook event (ShiprocketWebhookLog), just
+  // marked source: "admin-simulation" so it's never mistaken for a real
+  // Shiprocket event in the audit trail.
+  await ShiprocketWebhookLog.create({
+    orderId: result.orderId,
+    eventType: rawStatus,
+    rawPayload: { simulated: true, targetStatus: status, triggeredByAdminId: req.admin?.id || null },
+    source: "admin-simulation",
+  });
+
+  if (!result.success) {
+    return sendError(res, result.error || "Could not simulate status update", 400);
+  }
+
+  const updated = await Order.findByPk(order.id, { include: orderIncludes });
+
+  return sendSuccess(
+    res,
+    {
+      order: updated,
+      skipped: result.skipped || false,
+      reason: result.reason || null,
+      emailTriggered: EMAIL_LABELS[result.emailTriggered] || null,
+    },
+    result.skipped ? `No change — ${result.reason}` : "Status simulated successfully",
+  );
 });

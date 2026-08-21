@@ -962,17 +962,79 @@ function isForwardProgress(currentCustomerStatus, nextCustomerStatus) {
   return nextIndex > currentIndex;
 }
 
-// Processes one Shiprocket status webhook event: maps the status, applies
-// it to the matching order, and fires whichever Step B email that
-// transition corresponds to. Looked up by shiprocketShipmentId first
-// (matching every other lookup in this file), falling back to
-// shiprocketOrderId in case a given payload only carries one or the other.
-// Idempotent — a duplicate/retried event (same status, or one already
-// superseded) is a no-op, same "already applied is still success" contract
-// as utils/markOrderPaid.js. Never throws — same { success, error }
-// contract as every step above. Called from controllers/webhookController.js,
-// which verifies the webhook secret and persists the raw payload
-// (ShiprocketWebhookLog) before this runs.
+// Core status-update logic, addressed directly by orderId rather than a
+// shipment/order-id lookup — shared by the real webhook (handleShiprocket-
+// StatusWebhook below, which resolves an order from the payload first) AND
+// the admin test simulator (controllers/adminOrderController.js
+// simulateStatusUpdate, which already has an orderId from the URL). Both
+// go through the exact same mapping + forward-only guard + email trigger,
+// so the simulator exercises the real code path rather than a
+// reimplementation of it. Maps the raw status, applies it to the order, and
+// fires whichever Step B email that transition corresponds to. Idempotent —
+// a duplicate/retried event (same status, or one already superseded) is a
+// no-op, same "already applied is still success" contract as
+// utils/markOrderPaid.js. Never throws — same { success, error } contract
+// as every step above.
+async function processStatusUpdate(orderId, rawStatus) {
+  const order = await Order.findByPk(orderId);
+  if (!order) {
+    const error = `No order found with id ${orderId}`;
+    console.error(`Shiprocket status update: ${error}`);
+    return { success: false, error, orderId: null };
+  }
+
+  const nextStatus = mapShiprocketStatus(rawStatus);
+  if (!nextStatus) {
+    console.log(
+      `Shiprocket status update: unrecognized/non-actionable status "${rawStatus}" for order ${order.orderNumber} — logged, no customerStatus change`,
+    );
+    return { success: true, orderId: order.id, skipped: true, reason: "unrecognized or non-actionable status" };
+  }
+
+  if (!isForwardProgress(order.customerStatus, nextStatus)) {
+    console.log(
+      `Shiprocket status update: order ${order.orderNumber} already at or past "${nextStatus}" (currently "${order.customerStatus}") — ignoring stale/duplicate event`,
+    );
+    return { success: true, orderId: order.id, skipped: true, reason: "already applied" };
+  }
+
+  await order.update({ customerStatus: nextStatus });
+  console.log(`Shiprocket status update: order ${order.orderNumber} customerStatus -> ${nextStatus} (raw status: "${rawStatus}")`);
+
+  // "picked_up" also fires the "Order Packed" email — the real pickup-scan
+  // event Step B originally wanted, running alongside (not replacing) the
+  // label-generation-time fallback in generateLabelAndFulfill above, since
+  // both are guarded by the same emailsSent.packed flag: whichever fires
+  // first wins, and webhook delivery isn't guaranteed (not yet configured,
+  // or a delivery hiccup on Shiprocket's side), so the fallback stays as a
+  // safety net rather than being replaced outright.
+  let emailTriggered = null;
+  if (nextStatus === "picked_up") {
+    emailTriggered = "order-packed";
+    sendOrderPackedEmail(order.id).catch((err) =>
+      console.error(`Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+  } else if (nextStatus === "out_for_delivery") {
+    emailTriggered = "out-for-delivery";
+    sendOrderOutForDeliveryEmail(order.id).catch((err) =>
+      console.error(`Email: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+  } else if (nextStatus === "delivered") {
+    emailTriggered = "delivered";
+    sendOrderDeliveredEmail(order.id).catch((err) =>
+      console.error(`Email: delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+  }
+
+  return { success: true, orderId: order.id, customerStatus: nextStatus, emailTriggered };
+}
+
+// Resolves which order a real Shiprocket webhook payload is about (by
+// shiprocketShipmentId first, matching every other lookup in this file,
+// falling back to shiprocketOrderId in case a given payload only carries
+// one or the other), then delegates to processStatusUpdate above. Called
+// from controllers/webhookController.js, which verifies the webhook secret
+// and persists the raw payload (ShiprocketWebhookLog) before this runs.
 async function handleShiprocketStatusWebhook(payload) {
   const shipmentId = payload?.shipment_id;
   const shiprocketOrderId = payload?.order_id;
@@ -990,46 +1052,7 @@ async function handleShiprocketStatusWebhook(payload) {
     return { success: false, error, orderId: null };
   }
 
-  const nextStatus = mapShiprocketStatus(rawStatus);
-  if (!nextStatus) {
-    console.log(
-      `Shiprocket webhook: unrecognized/non-actionable status "${rawStatus}" for order ${order.orderNumber} — logged, no customerStatus change`,
-    );
-    return { success: true, orderId: order.id, skipped: true, reason: "unrecognized or non-actionable status" };
-  }
-
-  if (!isForwardProgress(order.customerStatus, nextStatus)) {
-    console.log(
-      `Shiprocket webhook: order ${order.orderNumber} already at or past "${nextStatus}" (currently "${order.customerStatus}") — ignoring stale/duplicate event`,
-    );
-    return { success: true, orderId: order.id, skipped: true, reason: "already applied" };
-  }
-
-  await order.update({ customerStatus: nextStatus });
-  console.log(`Shiprocket webhook: order ${order.orderNumber} customerStatus -> ${nextStatus} (raw status: "${rawStatus}")`);
-
-  // "picked_up" also fires the "Order Packed" email — the real pickup-scan
-  // event Step B originally wanted, running alongside (not replacing) the
-  // label-generation-time fallback in generateLabelAndFulfill above, since
-  // both are guarded by the same emailsSent.packed flag: whichever fires
-  // first wins, and webhook delivery isn't guaranteed (not yet configured,
-  // or a delivery hiccup on Shiprocket's side), so the fallback stays as a
-  // safety net rather than being replaced outright.
-  if (nextStatus === "picked_up") {
-    sendOrderPackedEmail(order.id).catch((err) =>
-      console.error(`Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
-  } else if (nextStatus === "out_for_delivery") {
-    sendOrderOutForDeliveryEmail(order.id).catch((err) =>
-      console.error(`Email: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
-  } else if (nextStatus === "delivered") {
-    sendOrderDeliveredEmail(order.id).catch((err) =>
-      console.error(`Email: delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
-  }
-
-  return { success: true, orderId: order.id, customerStatus: nextStatus };
+  return processStatusUpdate(order.id, rawStatus);
 }
 
 module.exports = {
@@ -1049,5 +1072,6 @@ module.exports = {
   parseWeightToKg,
   getWebhookSecret,
   mapShiprocketStatus,
+  processStatusUpdate,
   handleShiprocketStatusWebhook,
 };

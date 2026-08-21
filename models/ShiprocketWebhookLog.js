@@ -32,6 +32,17 @@ const ShiprocketWebhookLog = sequelize.define(
       allowNull: false,
       defaultValue: {},
     },
+    // "webhook" = a real Shiprocket status webhook. "admin-simulation" = the
+    // admin panel's test tool (adminOrderController.simulateStatusUpdate)
+    // calling the exact same processStatusUpdate() logic directly, for
+    // testing without a real courier — kept distinguishable here so the
+    // audit log never confuses a manually-triggered test event for a real
+    // one from Shiprocket.
+    source: {
+      type: DataTypes.ENUM("webhook", "admin-simulation"),
+      allowNull: false,
+      defaultValue: "webhook",
+    },
     receivedAt: {
       type: DataTypes.DATE,
       allowNull: false,

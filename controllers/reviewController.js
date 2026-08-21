@@ -66,7 +66,7 @@ exports.createReview = asyncHandler(async (req, res) => {
     customerName: customerName.trim(),
     rating: ratingNum,
     comment: comment.trim(),
-    photo: req.file ? `/uploads/${req.file.filename}` : null,
+    photo: req.file ? req.file.path : null,
   });
 
   return sendSuccess(res, review, "Review posted successfully", 201);

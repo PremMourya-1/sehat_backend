@@ -1,14 +1,7 @@
-const fs = require("fs");
-const path = require("path");
 const { Testimonial } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
-
-function removeUploadedFile(filename) {
-  if (!filename) return;
-  const base = filename.replace(/^\/?uploads\//, "");
-  fs.unlink(path.join("uploads", base), () => {});
-}
+const { deleteUploadedImage } = require("../utils/imageStorage");
 
 function toBool(value, fallback = true) {
   if (value === undefined) return fallback;
@@ -31,7 +24,7 @@ exports.createTestimonial = asyncHandler(async (req, res) => {
     designation,
     message,
     rating: rating || null,
-    image: req.file ? `/uploads/${req.file.filename}` : null,
+    image: req.file ? req.file.path : null,
     sortOrder: sortOrder || 0,
     status: toBool(status, true),
   });
@@ -53,8 +46,8 @@ exports.updateTestimonial = asyncHandler(async (req, res) => {
   if (status !== undefined) testimonial.status = toBool(status, testimonial.status);
 
   if (req.file) {
-    removeUploadedFile(testimonial.image);
-    testimonial.image = `/uploads/${req.file.filename}`;
+    await deleteUploadedImage(testimonial.image);
+    testimonial.image = req.file.path;
   }
 
   await testimonial.save();
@@ -66,7 +59,7 @@ exports.deleteTestimonial = asyncHandler(async (req, res) => {
   const testimonial = await Testimonial.findByPk(req.params.id);
   if (!testimonial) return sendError(res, "Testimonial not found", 404);
 
-  removeUploadedFile(testimonial.image);
+  await deleteUploadedImage(testimonial.image);
   await testimonial.destroy();
 
   return sendSuccess(res, null, "Testimonial deleted successfully");

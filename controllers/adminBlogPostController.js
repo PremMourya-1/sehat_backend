@@ -1,14 +1,7 @@
-const fs = require("fs");
-const path = require("path");
 const { BlogPost } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
-
-function removeUploadedFile(filename) {
-  if (!filename) return;
-  const base = filename.replace(/^\/?uploads\//, "");
-  fs.unlink(path.join("uploads", base), () => {});
-}
+const { deleteUploadedImage } = require("../utils/imageStorage");
 
 function toBool(value, fallback = true) {
   if (value === undefined) return fallback;
@@ -32,7 +25,7 @@ exports.createBlogPost = asyncHandler(async (req, res) => {
     excerpt: excerpt || null,
     content: content || null,
     readTime: readTime || null,
-    image: req.file ? `/uploads/${req.file.filename}` : null,
+    image: req.file ? req.file.path : null,
     sortOrder: (Number.isFinite(maxSort) ? maxSort : -1) + 1,
     status: toBool(status, true),
   });
@@ -54,8 +47,8 @@ exports.updateBlogPost = asyncHandler(async (req, res) => {
   if (sortOrder !== undefined) post.sortOrder = Number(sortOrder);
 
   if (req.file) {
-    if (post.image) removeUploadedFile(post.image);
-    post.image = `/uploads/${req.file.filename}`;
+    if (post.image) await deleteUploadedImage(post.image);
+    post.image = req.file.path;
   }
 
   await post.save();
@@ -67,7 +60,7 @@ exports.deleteBlogPost = asyncHandler(async (req, res) => {
   const post = await BlogPost.findByPk(req.params.id);
   if (!post) return sendError(res, "Blog post not found", 404);
 
-  if (post.image) removeUploadedFile(post.image);
+  if (post.image) await deleteUploadedImage(post.image);
   await post.destroy();
 
   return sendSuccess(res, null, "Blog post deleted successfully");

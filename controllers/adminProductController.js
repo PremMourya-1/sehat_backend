@@ -1,20 +1,13 @@
-const fs = require("fs");
-const path = require("path");
 const { Product, ProductImage, ProductVariant, Category } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
+const { deleteUploadedImage } = require("../utils/imageStorage");
 
 const productIncludes = [
   { model: Category, attributes: ["id", "name"] },
   { model: ProductImage, as: "images", separate: true, order: [["sortOrder", "ASC"]] },
   { model: ProductVariant, as: "variants", separate: true, order: [["sortOrder", "ASC"]] },
 ];
-
-function removeUploadedFile(filename) {
-  if (!filename) return;
-  const base = filename.replace(/^\/?uploads\//, "");
-  fs.unlink(path.join("uploads", base), () => {});
-}
 
 function toBool(value, fallback = false) {
   if (value === undefined) return fallback;
@@ -162,7 +155,7 @@ exports.createProduct = asyncHandler(async (req, res) => {
   for (let i = 0; i < files.length; i++) {
     await ProductImage.create({
       productId: product.id,
-      image: `/uploads/${files[i].filename}`,
+      image: files[i].path,
       sortOrder: i,
     });
   }
@@ -226,7 +219,7 @@ exports.updateProduct = asyncHandler(async (req, res) => {
         where: { id: removeIds, productId: product.id },
       });
       for (const img of imagesToRemove) {
-        removeUploadedFile(img.image);
+        await deleteUploadedImage(img.image);
         await img.destroy();
       }
     }
@@ -239,7 +232,7 @@ exports.updateProduct = asyncHandler(async (req, res) => {
     for (let i = 0; i < files.length; i++) {
       await ProductImage.create({
         productId: product.id,
-        image: `/uploads/${files[i].filename}`,
+        image: files[i].path,
         sortOrder: existingCount + i,
       });
     }
@@ -300,7 +293,7 @@ exports.deleteProduct = asyncHandler(async (req, res) => {
   if (!product) return sendError(res, "Product not found", 404);
 
   for (const img of product.images || []) {
-    removeUploadedFile(img.image);
+    await deleteUploadedImage(img.image);
   }
 
   await product.destroy();

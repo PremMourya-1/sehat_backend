@@ -123,16 +123,38 @@ async function getRazorpayCredentials() {
 }
 
 // The webhook secret is set independently in Razorpay's dashboard (separate
-// from the API key/secret pair) — stored per-mode in the same row.
+// from the API key/secret pair) — stored per-mode in the same row. Falls
+// back to RAZORPAY_WEBHOOK_SECRET from .env only when the active mode has no
+// webhook secret set yet, and in that case persists it into the DB as a
+// one-time seed — every call after that reads the DB. Same DB-first,
+// env-fallback-then-seed pattern as Shiprocket's getCredentials() in
+// utils/shiprocket.js.
 async function getRazorpayWebhookSecret() {
-  const { activeMode, test, live } = await getRazorpayConfig();
-  const modeConfig = activeMode === "test" ? test : live;
-  if (!modeConfig?.webhookSecret) {
+  const current = await getRazorpayConfig();
+  const { activeMode } = current;
+  const modeConfig = current[activeMode] || {};
+
+  if (modeConfig.webhookSecret) {
+    return decrypt(modeConfig.webhookSecret);
+  }
+
+  const envSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!envSecret) {
     throw new Error(
-      `Razorpay (${activeMode} mode) webhook secret is not configured — set it up from the admin panel (Integrations > Razorpay)`,
+      `Razorpay (${activeMode} mode) webhook secret is not configured — set it up from the admin panel (Integrations > Razorpay), or set RAZORPAY_WEBHOOK_SECRET in .env for first-time setup`,
     );
   }
-  return decrypt(modeConfig.webhookSecret);
+
+  const nextConfig = {
+    ...current,
+    [activeMode]: { ...modeConfig, webhookSecret: encrypt(envSecret) },
+  };
+  await saveRazorpayConfig(nextConfig);
+  console.log(
+    `Razorpay (${activeMode} mode) webhook secret seeded into IntegrationSettings from .env`,
+  );
+
+  return envSecret;
 }
 
 async function razorpayRequest(path, options = {}) {

@@ -25,7 +25,12 @@ function authenticateSocket(socket, next) {
 function initSocket(httpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: [process.env.STORE_FRONT_URL, process.env.STORE_FRONT_URL2, process.env.STORE_ADMIN_URL],
+      origin: [
+        process.env.STORE_FRONT_URL,
+        process.env.STORE_FRONT_URL2,
+        process.env.STORE_ADMIN_URL,
+        process.env.STORE_ADMIN_URL_LOCALE,
+      ],
       credentials: true,
     },
   });
@@ -55,7 +60,12 @@ async function emitNewOrder(order) {
   if (io) {
     io.to("admins").emit("new-order", {
       notification: notification.toJSON(),
-      order: { id: order.id, orderNumber: order.orderNumber, total: order.total, paymentMethod: order.paymentMethod },
+      order: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        total: order.total,
+        paymentMethod: order.paymentMethod,
+      },
     });
   }
 

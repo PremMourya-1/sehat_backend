@@ -1,14 +1,7 @@
-const fs = require("fs");
-const path = require("path");
 const { Category } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
-
-function removeUploadedFile(filename) {
-  if (!filename) return;
-  const base = filename.replace(/^\/?uploads\//, "");
-  fs.unlink(path.join("uploads", base), () => {});
-}
+const { deleteUploadedImage } = require("../utils/imageStorage");
 
 function toBool(value, fallback = true) {
   if (value === undefined) return fallback;
@@ -33,7 +26,7 @@ exports.createCategory = asyncHandler(async (req, res) => {
   const { name, shortDescription, status } = req.body;
   if (!name) return sendError(res, "Name is required", 400);
 
-  const image = req.file ? `/uploads/${req.file.filename}` : null;
+  const image = req.file ? req.file.path : null;
   const category = await Category.create({
     name,
     shortDescription: shortDescription || null,
@@ -55,8 +48,8 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   if (status !== undefined) category.status = toBool(status, category.status);
 
   if (req.file) {
-    if (category.image) removeUploadedFile(category.image);
-    category.image = `/uploads/${req.file.filename}`;
+    if (category.image) await deleteUploadedImage(category.image);
+    category.image = req.file.path;
   }
 
   await category.save();
@@ -68,7 +61,7 @@ exports.deleteCategory = asyncHandler(async (req, res) => {
   const category = await Category.findByPk(req.params.id);
   if (!category) return sendError(res, "Category not found", 404);
 
-  if (category.image) removeUploadedFile(category.image);
+  if (category.image) await deleteUploadedImage(category.image);
   await category.destroy();
 
   return sendSuccess(res, null, "Category deleted successfully");

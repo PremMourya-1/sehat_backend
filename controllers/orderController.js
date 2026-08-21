@@ -242,12 +242,19 @@ exports.getRecentOrders = asyncHandler(async (req, res) => {
   return sendSuccess(res, orders);
 });
 
-// GET /api/orders/:id
+// GET /api/orders/:id — includes everything the list endpoint above does,
+// plus courierName/awbCode (already plain Order columns) and a computed
+// trackingUrl for the "Track on Shiprocket" link on the order detail page.
+// Shiprocket's public tracking page is keyed by AWB code alone (no account
+// login needed on the customer's side), so trackingUrl is null until an AWB
+// has actually been assigned (see utils/shiprocket.js assignAWBWithRetry).
 exports.getOrderById = asyncHandler(async (req, res) => {
   const order = await Order.findOne({
     where: { id: req.params.id, customerId: req.customer.id },
     include: orderItemIncludes,
   });
   if (!order) return sendError(res, "Order not found", 404);
-  return sendSuccess(res, order);
+
+  const trackingUrl = order.awbCode ? `https://shiprocket.co/tracking/${order.awbCode}` : null;
+  return sendSuccess(res, { ...order.toJSON(), trackingUrl });
 });

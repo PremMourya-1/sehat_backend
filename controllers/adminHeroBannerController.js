@@ -1,14 +1,7 @@
-const fs = require("fs");
-const path = require("path");
 const { HeroBanner } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
-
-function removeUploadedFile(filename) {
-  if (!filename) return;
-  const base = filename.replace(/^\/?uploads\//, "");
-  fs.unlink(path.join("uploads", base), () => {});
-}
+const { deleteUploadedImage } = require("../utils/imageStorage");
 
 function toBool(value, fallback = true) {
   if (value === undefined) return fallback;
@@ -27,7 +20,7 @@ exports.createHeroBanner = asyncHandler(async (req, res) => {
 
   const maxSort = await HeroBanner.max("sortOrder");
   const banner = await HeroBanner.create({
-    image: `/uploads/${req.file.filename}`,
+    image: req.file.path,
     title: req.body.title || null,
     description: req.body.description || null,
     sortOrder: (Number.isFinite(maxSort) ? maxSort : -1) + 1,
@@ -48,8 +41,8 @@ exports.updateHeroBanner = asyncHandler(async (req, res) => {
   if (req.body.description !== undefined) banner.description = req.body.description || null;
 
   if (req.file) {
-    removeUploadedFile(banner.image);
-    banner.image = `/uploads/${req.file.filename}`;
+    await deleteUploadedImage(banner.image);
+    banner.image = req.file.path;
   }
 
   await banner.save();
@@ -61,7 +54,7 @@ exports.deleteHeroBanner = asyncHandler(async (req, res) => {
   const banner = await HeroBanner.findByPk(req.params.id);
   if (!banner) return sendError(res, "Hero banner not found", 404);
 
-  removeUploadedFile(banner.image);
+  await deleteUploadedImage(banner.image);
   await banner.destroy();
 
   return sendSuccess(res, null, "Hero banner deleted successfully");

@@ -100,6 +100,7 @@ exports.shiprocketWebhook = asyncHandler(async (req, res) => {
     orderId: result.orderId || null,
     eventType: String(payload?.current_status ?? payload?.shipment_status ?? ""),
     rawPayload: payload,
+    source: "webhook",
   });
 
   if (!result.success) {

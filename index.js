@@ -37,7 +37,13 @@ const blogRoutes = require("./routes/blogRoutes");
 const faqRoutes = require("./routes/faqRoutes");
 const newsletterRoutes = require("./routes/newsletterRoutes");
 const errorHandler = require("./middleware/errorHandler");
-const { CmsPage, ComboOffer, BlogPost, Faq, ShippingZone } = require("./models");
+const {
+  CmsPage,
+  ComboOffer,
+  BlogPost,
+  Faq,
+  ShippingZone,
+} = require("./models");
 
 const app = express();
 
@@ -47,13 +53,24 @@ app.use(morgan("dev"));
 // parsed req.body — needed by the Razorpay webhook handler, which has to
 // HMAC the *raw* payload (a re-serialized JSON.stringify(req.body) isn't
 // guaranteed byte-identical to what Razorpay actually signed).
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 app.use(
   cors({
-    origin: [process.env.STORE_FRONT_URL, process.env.STORE_FRONT_URL2, process.env.STORE_ADMIN_URL],
+    origin: [
+      process.env.STORE_FRONT_URL,
+      process.env.STORE_FRONT_URL2,
+      process.env.STORE_ADMIN_URL,
+      process.env.STORE_ADMIN_URL_LOCALE,
+    ],
     credentials: true,
   }),
 );
@@ -93,7 +110,8 @@ const DEFAULT_CMS_PAGES = [
   {
     slug: "terms-and-conditions",
     title: "Terms & Conditions",
-    content: "<p>Add your terms and conditions content from the admin panel.</p>",
+    content:
+      "<p>Add your terms and conditions content from the admin panel.</p>",
   },
   {
     slug: "privacy-policy",
@@ -140,7 +158,8 @@ const seedStarterContent = async () => {
     },
     {
       title: "Festive Bundle — Save 15%",
-      description: "Trail Mix + Seeds Mix + Gift Hamper, bundled for the season.",
+      description:
+        "Trail Mix + Seeds Mix + Gift Hamper, bundled for the season.",
       discountLabel: "15% OFF",
       ctaLabel: "View Bundle",
       ctaLink: "/products",
@@ -150,21 +169,24 @@ const seedStarterContent = async () => {
   await seedIfEmpty(BlogPost, [
     {
       title: "5 Healthy Trail Mix Recipes for Busy Mornings",
-      excerpt: "Quick, protein-packed combinations you can prep once and snack on all week.",
+      excerpt:
+        "Quick, protein-packed combinations you can prep once and snack on all week.",
       readTime: "4 min read",
       content:
         "<p>Mornings are hectic, but that's no excuse to skip a nutritious snack. Here are five trail mix combinations you can batch-prep on a Sunday and portion out for the week ahead.</p><h3>1. Classic Energy Mix</h3><p>Almonds, cashews, raisins and a handful of dark chocolate chips — a balance of protein, healthy fats and a little sweetness.</p><h3>2. Protein Power Mix</h3><p>Roasted chana, peanuts and pumpkin seeds for a savory, protein-forward option.</p><h3>3. Antioxidant Mix</h3><p>Walnuts, dried cranberries and sunflower seeds — great for heart health.</p><h3>4. Kids' Favorite Mix</h3><p>Cashews, raisins and a few banana chips — mild and naturally sweet.</p><h3>5. Festive Mix</h3><p>Pistachios, almonds and dried figs — perfect for gifting or a special occasion.</p>",
     },
     {
       title: "Smart Snacking: How Much Dry Fruit Should You Eat Daily?",
-      excerpt: "A simple guide to portion sizes for almonds, walnuts, and seed mixes.",
+      excerpt:
+        "A simple guide to portion sizes for almonds, walnuts, and seed mixes.",
       readTime: "3 min read",
       content:
         "<p>Dry fruits are nutrient-dense, which means a little goes a long way. As a general guideline, a daily handful (about 25–30g) is enough to get the benefits without overdoing the calories.</p><h3>Almonds &amp; Cashews</h3><p>About 8–10 almonds or 6–8 cashews a day is a good baseline for most adults.</p><h3>Walnuts</h3><p>4–5 halves a day is plenty — they're higher in fat than most other nuts.</p><h3>Seeds</h3><p>1–2 tablespoons of chia, flax or pumpkin seeds daily works well sprinkled over meals.</p>",
     },
     {
       title: "The Festive Gifting Guide: Hampers That Feel Personal",
-      excerpt: "How to pick (or build) a dry fruit hamper that doesn't feel generic.",
+      excerpt:
+        "How to pick (or build) a dry fruit hamper that doesn't feel generic.",
       readTime: "5 min read",
       content:
         "<p>A good gift hamper feels thoughtful, not generic. Here's how to pick one that stands out.</p><h3>Mix textures, not just types</h3><p>Combine something crunchy (almonds, pistachios), something chewy (dried figs, apricots) and something sweet (a small treat) for variety.</p><h3>Consider the packaging</h3><p>Reusable jars or tins add lasting value beyond the contents themselves.</p><h3>Personalize where you can</h3><p>A hand-written note or a custom mix based on the recipient's preferences makes all the difference.</p>",
@@ -172,11 +194,31 @@ const seedStarterContent = async () => {
   ]);
 
   await seedIfEmpty(Faq, [
-    { question: "How long does delivery take?", answer: "Most orders are delivered within 3–5 business days. Metro cities usually see delivery in 2–3 days." },
-    { question: "What is your return policy?", answer: "If a product arrives damaged or incorrect, you can request a return/replacement within 48 hours of delivery." },
-    { question: "How do you guarantee freshness?", answer: "Every batch is packed in small quantities and sealed in airtight, moisture-proof packaging with a printed best-before date." },
-    { question: "Is Cash on Delivery (COD) available?", answer: "Yes, COD is available on most pin codes. You'll see COD availability at checkout based on your delivery address." },
-    { question: "Can I subscribe for repeat orders?", answer: "Yes — use Subscribe & Save on any product to get it delivered automatically every 2 or 4 weeks, with an extra discount." },
+    {
+      question: "How long does delivery take?",
+      answer:
+        "Most orders are delivered within 3–5 business days. Metro cities usually see delivery in 2–3 days.",
+    },
+    {
+      question: "What is your return policy?",
+      answer:
+        "If a product arrives damaged or incorrect, you can request a return/replacement within 48 hours of delivery.",
+    },
+    {
+      question: "How do you guarantee freshness?",
+      answer:
+        "Every batch is packed in small quantities and sealed in airtight, moisture-proof packaging with a printed best-before date.",
+    },
+    {
+      question: "Is Cash on Delivery (COD) available?",
+      answer:
+        "Yes, COD is available on most pin codes. You'll see COD availability at checkout based on your delivery address.",
+    },
+    {
+      question: "Can I subscribe for repeat orders?",
+      answer:
+        "Yes — use Subscribe & Save on any product to get it delivered automatically every 2 or 4 weeks, with an extra discount.",
+    },
   ]);
 
   await seedShippingZones();
@@ -189,7 +231,15 @@ const DEFAULT_SHIPPING_ZONES = [
   { zoneName: "Same State", states: ["Rajasthan"], shippingCharge: 40 },
   {
     zoneName: "Nearby States",
-    states: ["Gujarat", "Madhya Pradesh", "Haryana", "Punjab", "Uttar Pradesh", "Delhi", "Chandigarh"],
+    states: [
+      "Gujarat",
+      "Madhya Pradesh",
+      "Haryana",
+      "Punjab",
+      "Uttar Pradesh",
+      "Delhi",
+      "Chandigarh",
+    ],
     shippingCharge: 60,
   },
   {
@@ -253,7 +303,9 @@ const startServer = async () => {
     // against production from here. Local dev (the default) keeps doing both,
     // same as before.
     if (process.env.DB_MODE === "live") {
-      console.log("DB_MODE=live — skipping sync/seed, connected read/write to production data as-is");
+      console.log(
+        "DB_MODE=live — skipping sync/seed, connected read/write to production data as-is",
+      );
     } else {
       await sequelize.sync({ alter: true });
       console.log("Database synced");
