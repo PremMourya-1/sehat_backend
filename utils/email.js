@@ -7,26 +7,33 @@ const INTEGRATION_KEY = "resend";
 // Reads Resend credentials from IntegrationSettings (config-driven,
 // admin-panel-managed — same clone-ability reason as Shiprocket/Razorpay,
 // see utils/shiprocket.js getCredentials()). Falls back to
-// RESEND_API_KEY/RESEND_FROM_EMAIL from .env only when no DB row exists
-// yet (those env vars already exist for utils/mailer.js's OTP emails), and
-// in that case persists them into the DB as a one-time seed — every call
-// after that reads the DB.
+// RESEND_API_KEY/RESEND_FROM_EMAIL/RESEND_REPLY_TO from .env only when no
+// DB row exists yet (those env vars already exist for utils/mailer.js's OTP
+// emails), and in that case persists them into the DB as a one-time seed —
+// every call after that reads the DB. replyTo is optional everywhere (a
+// verified sending domain doesn't require it) — sendEmail() below only
+// attaches it when present.
 async function getEmailCredentials() {
   const setting = await IntegrationSetting.findOne({ where: { integrationKey: INTEGRATION_KEY } });
 
   if (setting?.config?.apiKey && setting?.config?.fromEmail) {
-    return { apiKey: decrypt(setting.config.apiKey), fromEmail: setting.config.fromEmail };
+    return {
+      apiKey: decrypt(setting.config.apiKey),
+      fromEmail: setting.config.fromEmail,
+      replyTo: setting.config.replyTo || null,
+    };
   }
 
   const envApiKey = process.env.RESEND_API_KEY;
   const envFromEmail = process.env.RESEND_FROM_EMAIL;
+  const envReplyTo = process.env.RESEND_REPLY_TO || null;
   if (!envApiKey || !envFromEmail) {
     throw new Error(
       "Resend is not configured — set it up from the admin panel (Settings > Integrations > Resend), or set RESEND_API_KEY/RESEND_FROM_EMAIL in .env for first-time setup",
     );
   }
 
-  const seededConfig = { apiKey: encrypt(envApiKey), fromEmail: envFromEmail };
+  const seededConfig = { apiKey: encrypt(envApiKey), fromEmail: envFromEmail, replyTo: envReplyTo };
   if (setting) {
     setting.config = seededConfig;
     await setting.save();
@@ -35,7 +42,7 @@ async function getEmailCredentials() {
   }
   console.log("Resend credentials seeded into IntegrationSettings from .env");
 
-  return { apiKey: envApiKey, fromEmail: envFromEmail };
+  return { apiKey: envApiKey, fromEmail: envFromEmail, replyTo: envReplyTo };
 }
 
 // Generic transactional email sender — every order email below goes through
@@ -50,9 +57,15 @@ async function sendEmail(to, subject, htmlBody) {
     throw new Error("Recipient email is required");
   }
 
-  const { apiKey, fromEmail } = await getEmailCredentials();
+  const { apiKey, fromEmail, replyTo } = await getEmailCredentials();
   const client = new Resend(apiKey);
-  const { error } = await client.emails.send({ from: fromEmail, to, subject, html: htmlBody });
+  const { error } = await client.emails.send({
+    from: fromEmail,
+    to,
+    subject,
+    html: htmlBody,
+    ...(replyTo && { replyTo }),
+  });
 
   if (error) {
     throw new Error(error.message || "Resend rejected the email");

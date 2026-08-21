@@ -5,6 +5,7 @@ const { sendSuccess, sendError } = require("../utils/response");
 const generateToken = require("../utils/generateToken");
 const generateOtp = require("../utils/otp");
 const { sendOtpEmail } = require("../utils/mailer");
+const { isEmailDomainValid } = require("../utils/validateEmailDomain");
 
 const cookieOptions = { httpOnly: true, sameSite: "lax" };
 
@@ -31,6 +32,16 @@ exports.register = asyncHandler(async (req, res) => {
   }
 
   const normalizedEmail = String(email).toLowerCase().trim();
+
+  // Domain-level deliverability check (MX, falling back to A/AAAA per RFC
+  // 5321) — catches typos and made-up domains before an OTP send is wasted
+  // on them. Not Gmail-only or provider-restricted on purpose: any real,
+  // receiving domain is accepted (Yahoo, Outlook, a company's own domain,
+  // ...). See utils/validateEmailDomain.js.
+  if (!(await isEmailDomainValid(normalizedEmail))) {
+    return sendError(res, "This email address doesn't appear to be valid", 400);
+  }
+
   const hashedPassword = await bcrypt.hash(password, 10);
 
   let customer = await Customer.findOne({ where: { email: normalizedEmail } });

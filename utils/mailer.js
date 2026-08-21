@@ -14,6 +14,7 @@ function getResendClient() {
 
 async function sendOtpEmail(to, otp) {
   const fromEmail = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const replyTo = process.env.RESEND_REPLY_TO || undefined;
 
   const html = `
     <div style="font-family: Poppins, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #F5EDE0; border-radius: 12px;">
@@ -33,6 +34,7 @@ async function sendOtpEmail(to, otp) {
     to,
     subject: "Your Sehat Potli verification code",
     html,
+    ...(replyTo && { replyTo }),
   });
 }
 
