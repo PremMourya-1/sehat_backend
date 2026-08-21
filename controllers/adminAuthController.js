@@ -28,7 +28,13 @@ exports.adminLogin = asyncHandler(async (req, res) => {
   const token = generateToken({ id: admin.id, type: "admin", email: admin.email });
   res.cookie("admin_token", token, cookieOptions);
 
-  return sendSuccess(res, sanitizeAdmin(admin), "Login successful");
+  // Cookie above is the primary mechanism (production, same-site admin
+  // frontend <-> backend) — token is also returned here so the admin
+  // frontend can fall back to an Authorization: Bearer header when the
+  // cookie won't be sent at all, e.g. testing a local admin frontend
+  // against the live backend (cross-site, SameSite=Lax withholds it). See
+  // middleware/adminAuth.js, which accepts either.
+  return sendSuccess(res, { ...sanitizeAdmin(admin), token }, "Login successful");
 });
 
 // POST /api/admin/logout
