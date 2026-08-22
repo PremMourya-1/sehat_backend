@@ -139,6 +139,11 @@ const Order = sequelize.define(
     // Most recent reason AWB assignment was skipped or failed — cleared back
     // to null on a successful assignment. Debugging/admin visibility only.
     lastAwbError: { type: DataTypes.TEXT, allowNull: true },
+    // Set alongside awbCode/courierName from the assigned courier's own
+    // estimate (see utils/shiprocket.js getCourierEstimatedDeliveryDate) —
+    // null until AWB assignment succeeds, so the tracking page has nothing
+    // to show before dispatch.
+    estimatedDeliveryDate: { type: DataTypes.DATE, allowNull: true },
 
     // Pickup scheduling (see utils/shiprocket.js schedulePickup/cancelPickup).
     pickupStatus: {

@@ -452,9 +452,21 @@ async function checkPincodeServiceability(
     weight,
     codAmount,
   );
+
+  const deliveryDays = couriers
+    .map(getCourierEstimatedDeliveryDays)
+    .filter((days) => days !== null);
+
   return {
     serviceable: couriers.length > 0,
     codAvailable: couriers.some((courier) => Number(courier.cod) === 1),
+    // A range across all serviceable couriers, not just the cheapest one
+    // that'll actually get picked at order time (selectCheapestCourier) —
+    // this runs before checkout, so there's no "the" courier yet, just a
+    // rough expectation to set for the customer.
+    estimatedDeliveryDays: deliveryDays.length
+      ? { min: Math.min(...deliveryDays), max: Math.max(...deliveryDays) }
+      : null,
   };
 }
 
@@ -469,6 +481,33 @@ function getCourierRate(courier) {
 
 function sortCouriersByCheapest(courierList) {
   return [...courierList].sort((a, b) => getCourierRate(a) - getCourierRate(b));
+}
+
+// Shiprocket's field name for a courier's days-from-now delivery estimate
+// has varied across response versions — check the known variants rather
+// than assuming one (same defensive approach as the old
+// getEstimatedDeliveryDays).
+function getCourierEstimatedDeliveryDays(courier) {
+  const days = Number(
+    courier?.estimated_delivery_days ??
+      courier?.etd_days ??
+      courier?.edd ??
+      courier?.estimated_delivery_time,
+  );
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+
+// Shiprocket's serviceability response also gives each courier an "etd" —
+// an absolute date string (e.g. "Aug 26, 2026"), already computed on their
+// side — preferred when present; falls back to today + the days estimate
+// above otherwise.
+function getCourierEstimatedDeliveryDate(courier) {
+  if (courier?.etd) {
+    const parsed = new Date(courier.etd);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  const days = getCourierEstimatedDeliveryDays(courier);
+  return days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null;
 }
 
 // Picks the cheapest courier (by rate/freight_charge) from a
@@ -491,10 +530,13 @@ function selectCheapestCourier(courierList) {
 // (HTTP-level via authenticatedRequest, or a logical failure Shiprocket
 // reports inside a 200 response) — assignAWBWithRetry is what catches this
 // and moves on to the next courier.
-async function assignAWB(shipmentId, courierId) {
+async function assignAWB(shipmentId, courier) {
   const data = await authenticatedRequest("/courier/assign/awb", {
     method: "POST",
-    body: JSON.stringify({ shipment_id: shipmentId, courier_id: courierId }),
+    body: JSON.stringify({
+      shipment_id: shipmentId,
+      courier_id: courier.courier_company_id,
+    }),
   });
 
   const awbData = data?.response?.data;
@@ -508,8 +550,12 @@ async function assignAWB(shipmentId, courierId) {
 
   return {
     awbCode: String(awbData.awb_code),
-    courierCompanyId: String(awbData.courier_company_id ?? courierId),
+    courierCompanyId: String(awbData.courier_company_id ?? courier.courier_company_id),
     courierName: awbData.courier_name || "",
+    // From the serviceability courier we just assigned, not the AWB
+    // response itself — Shiprocket's AWB-assign response doesn't carry a
+    // delivery estimate, only the serviceability check does.
+    estimatedDeliveryDate: getCourierEstimatedDeliveryDate(courier),
   };
 }
 
@@ -553,7 +599,7 @@ async function assignAWBWithRetry(shipmentId, courierList) {
           courier.courier_name || courier.courier_company_id,
         );
         try {
-          return await assignAWB(shipmentId, courier.courier_company_id);
+          return await assignAWB(shipmentId, courier);
         } catch (err) {
           lastError = err;
           throw err;
@@ -570,6 +616,7 @@ async function assignAWBWithRetry(shipmentId, courierList) {
       awbCode: awbResult.awbCode,
       courierCompanyId: awbResult.courierCompanyId,
       courierName: awbResult.courierName,
+      estimatedDeliveryDate: awbResult.estimatedDeliveryDate,
       awbStatus: "assigned",
       awbAssignedAt: new Date(),
       lastAwbError: null,
@@ -728,13 +775,24 @@ async function cancelPickup(shipmentId) {
       { attempts: 2, delayMs: 1000, shouldRetry: isRetryableShiprocketError },
     );
 
-    if (data?.message && !/success/i.test(data.message)) {
-      throw new Error(data.message);
-    }
+    // authenticatedRequest() above already throws for any non-2xx response
+    // (see its own definition) — that's the real success/failure signal for
+    // this endpoint, a 2xx response here always means Shiprocket accepted
+    // the cancellation. This used to also require the literal word
+    // "success" to appear in data.message, which broke on Shiprocket's
+    // actual wording for a real, successful cancellation — confirmed from a
+    // real response body: {"message":"Your request to cancel order id
+    // ORD-... has been taken. The freight amount against the order is
+    // blocked and will be added back automatically to your wallet in 3-4
+    // working days subject to confirmation from the courier.","status_code":...}
+    // — no "success" anywhere in it, so that check misclassified a
+    // confirmed cancellation as a failure and left the order un-cancelled.
+    // Same class of bug as isAlreadyInPickupQueueError() above: Shiprocket's
+    // message wording isn't a reliable success/failure signal on its own.
 
     await order.update({ pickupStatus: "cancelled" });
     console.log(
-      `Shiprocket: pickup/order cancelled for order ${order.orderNumber} (shipment ${shipmentId})`,
+      `Shiprocket: order cancelled for order ${order.orderNumber} (shipment ${shipmentId}): ${data?.message || "no message in response"}`,
     );
     return { success: true, data };
   } catch (err) {
