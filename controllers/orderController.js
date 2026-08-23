@@ -143,6 +143,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
           shippingCity: location.city,
           shippingState: location.state,
           shippingPincode,
+          statusHistory: { confirmed: new Date() },
         },
         { transaction: t },
       );

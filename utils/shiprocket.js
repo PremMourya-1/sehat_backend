@@ -952,7 +952,10 @@ async function generateLabelAndFulfill(orderId) {
       return labelResult;
     }
 
-    await order.update({ customerStatus: "dispatched" });
+    await order.update({
+      customerStatus: "dispatched",
+      statusHistory: { ...order.statusHistory, dispatched: new Date() },
+    });
     sendOrderPackedEmail(order.id).catch((err) =>
       console.error(
         `Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
@@ -1066,7 +1069,10 @@ async function processStatusUpdate(orderId, rawStatus) {
     return { success: true, orderId: order.id, skipped: true, reason: "already applied" };
   }
 
-  await order.update({ customerStatus: nextStatus });
+  await order.update({
+    customerStatus: nextStatus,
+    statusHistory: { ...order.statusHistory, [nextStatus]: new Date() },
+  });
   console.log(`Shiprocket status update: order ${order.orderNumber} customerStatus -> ${nextStatus} (raw status: "${rawStatus}")`);
 
   // "picked_up" also fires the "Order Packed" email — the real pickup-scan

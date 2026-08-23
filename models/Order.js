@@ -66,6 +66,17 @@ const Order = sequelize.define(
       ),
       defaultValue: "confirmed",
     },
+    // One timestamp per customerStatus value ever reached, keyed by that
+    // same status string (e.g. { confirmed: <date>, dispatched: <date>,
+    // picked_up: <date>, ... }) — set once each webhook/action first moves
+    // the order into that stage (see orderController.createOrder,
+    // utils/shiprocket.js generateLabelAndFulfill/processStatusUpdate) and
+    // never overwritten afterward, so the tracking stepper can show "reached
+    // <date>" per step instead of only the current stage.
+    statusHistory: {
+      type: DataTypes.JSONB,
+      defaultValue: {},
+    },
     // Cancellation — see utils/orderCancellation.js finalizeCancellation(),
     // called from both the customer-initiated (orderController.cancelOrder,
     // only while customerStatus === "confirmed") and admin-initiated
