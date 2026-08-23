@@ -49,6 +49,14 @@ const {
 
 const app = express();
 
+// Keep-alive ping for an external uptime monitor (Render's free tier sleeps
+// the service after ~15 min idle) — registered before every other
+// middleware so it never depends on CORS/helmet/body-parsing/etc, and never
+// touches the DB. Hit every 5 minutes, forever — must stay instant.
+app.get("/ping", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(morgan("dev"));
 // `verify` stashes the exact raw bytes on req.rawBody alongside the usual
