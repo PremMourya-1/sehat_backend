@@ -1,14 +1,15 @@
 const { DataTypes } = require("sequelize");
 const { sequelize } = require("../config/db");
 
-// Standalone purchase/expense record — see FINANCE.md. Deliberately has no
-// association to any other model (Order/Product/etc.) and is never touched
-// by the main storefront/admin flows; only routes/expensesRoutes.js and its
-// own controllers ever read/write this table.
+// Standalone offline-sale record (a sale made outside the normal online
+// store, e.g. in person) — see FINANCE.md. Same shape/isolation as
+// Expense: no association to any other model, gated by the same
+// expensesAuth middleware (routes/salesRoutes.js), never touched by the
+// main storefront/admin flows.
 const ALLOWED_ADDED_BY = ["shinu", "komal"];
 
-const Expense = sequelize.define(
-  "Expense",
+const Sale = sequelize.define(
+  "Sale",
   {
     id: {
       type: DataTypes.UUID,
@@ -19,11 +20,11 @@ const Expense = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
-    purchasePrice: {
+    salePrice: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
     },
-    purchaseDate: {
+    saleDate: {
       type: DataTypes.DATEONLY,
       allowNull: false,
       defaultValue: DataTypes.NOW,
@@ -38,10 +39,10 @@ const Expense = sequelize.define(
     },
   },
   {
-    tableName: "Expenses",
+    tableName: "Sales",
   },
 );
 
-Expense.ALLOWED_ADDED_BY = ALLOWED_ADDED_BY;
+Sale.ALLOWED_ADDED_BY = ALLOWED_ADDED_BY;
 
-module.exports = Expense;
+module.exports = Sale;

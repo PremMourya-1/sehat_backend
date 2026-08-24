@@ -10,7 +10,7 @@ const {
   deleteExpense,
 } = require("../controllers/expensesController");
 
-// Entirely separate auth system from the admin panel (see EXPENSES.md) —
+// Entirely separate auth system from the admin panel (see FINANCE.md) —
 // login is the only route here without expensesAuth, and expensesAuth
 // itself is never mounted anywhere outside this router.
 router.post("/login", expensesLogin);

@@ -26,6 +26,7 @@ const Notification = require("./Notification");
 const ShippingZone = require("./ShippingZone");
 const ShiprocketWebhookLog = require("./ShiprocketWebhookLog");
 const Expense = require("./Expense");
+const Sale = require("./Sale");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -118,4 +119,5 @@ module.exports = {
   ShippingZone,
   ShiprocketWebhookLog,
   Expense,
+  Sale,
 };

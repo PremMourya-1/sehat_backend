@@ -12,7 +12,7 @@ const TOKEN_EXPIRES_IN = "30d";
 // Same DB-first, .env-fallback-seed pattern as utils/shiprocket.js
 // getCredentials() — lets the shared password be changed later straight
 // from the DB (no redeploy needed) while still supporting a zero-config
-// first run via EXPENSES_PASSWORD. See EXPENSES.md for how to change it.
+// first run via EXPENSES_PASSWORD. See FINANCE.md for how to change it.
 async function getExpensesPassword() {
   const setting = await IntegrationSetting.findOne({
     where: { integrationKey: INTEGRATION_KEY },

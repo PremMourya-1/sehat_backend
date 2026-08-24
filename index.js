@@ -38,6 +38,7 @@ const blogRoutes = require("./routes/blogRoutes");
 const faqRoutes = require("./routes/faqRoutes");
 const newsletterRoutes = require("./routes/newsletterRoutes");
 const expensesRoutes = require("./routes/expensesRoutes");
+const salesRoutes = require("./routes/salesRoutes");
 const errorHandler = require("./middleware/errorHandler");
 const {
   CmsPage,
@@ -110,8 +111,11 @@ app.use("/api/home", homeRoutes);
 app.use("/api/blog-posts", blogRoutes);
 app.use("/api/faqs", faqRoutes);
 app.use("/api/newsletter", newsletterRoutes);
-// Fully separate auth system from /api/admin — see EXPENSES.md.
+// Fully separate auth system from /api/admin — see FINANCE.md. Sales
+// shares the exact same login/middleware as Expenses (see
+// routes/salesRoutes.js) — one Finance mini-app, two resources.
 app.use("/api/expenses", expensesRoutes);
+app.use("/api/sales", salesRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ action: false, message: "Route not found" });
