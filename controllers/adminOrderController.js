@@ -1,5 +1,5 @@
 const { PDFDocument } = require("pdf-lib");
-const { Order, OrderItem, Product, Customer, ShiprocketWebhookLog } = require("../models");
+const { Order, OrderItem, Product, Customer, ShiprocketWebhookLog, ComboOffer } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { generateLabelAndFulfill, processStatusUpdate, cancelPickup } = require("../utils/shiprocket");
@@ -42,7 +42,10 @@ const orderIncludes = [
   { model: Customer, attributes: ["id", "name", "email", "mobileNumber"] },
   {
     model: OrderItem,
-    include: [{ model: Product, attributes: ["id", "name", "image"] }],
+    include: [
+      { model: Product, attributes: ["id", "name", "image"] },
+      { model: ComboOffer, attributes: ["id", "title"] },
+    ],
   },
 ];
 

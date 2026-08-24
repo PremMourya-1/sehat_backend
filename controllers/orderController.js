@@ -1,4 +1,4 @@
-const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem } = require("../models");
+const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem, ComboOffer } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const calculateSubtotal = require("../utils/calculateSubtotal");
@@ -20,16 +20,24 @@ const PAYMENT_METHODS = ["cod", "prepaid"];
 const orderItemIncludes = [
   {
     model: OrderItem,
-    include: [{ model: Product, attributes: ["id", "name", "image"] }],
+    include: [
+      { model: Product, attributes: ["id", "name", "image"] },
+      { model: ComboOffer, attributes: ["id", "title"] },
+    ],
   },
 ];
 
 const MOBILE_REGEX = /^[0-9]{10}$/;
 
 // POST /api/orders
-// body: { items: [{ variantId, quantity }], couponCode?, shippingName, shippingPhone,
+// body: { items: [{ variantId, quantity, comboOfferId? }], couponCode?, shippingName, shippingPhone,
 //         alternateMobile?, shippingAddress, shippingPincode,
 //         paymentMethod? ("cod" | "prepaid", defaults to "cod") }
+// A combo purchase is submitted pre-expanded into its real product/variant
+// lines (see sehat-potli-front's Utils/cartExpansion.js) tagged with the
+// combo's id — each still goes through normal stock/weight/COD handling
+// below as a real line item; only the pricing (see calculateSubtotal)
+// treats the tagged group specially.
 // shippingCity/shippingState are never taken from the client — the customer
 // only ever enters/confirms a pincode (checked up front on the product page,
 // see checkoutController.checkPincode); city/state are resolved server-side
@@ -65,14 +73,18 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const subtotalResult = await calculateSubtotal(items);
   if (subtotalResult.error) return sendError(res, subtotalResult.error, 400);
 
-  const { subtotal, items: lineItems } = subtotalResult;
+  const { subtotal, items: lineItems, comboDiscount } = subtotalResult;
 
-  let discountAmount = 0;
+  // Combo savings (subtotal, computed from each item's real price, minus
+  // what the combo actually charges — see utils/calculateSubtotal.js) fold
+  // straight into the same discountAmount a coupon would use, so `total`
+  // below needs no separate combo-aware formula.
+  let discountAmount = comboDiscount || 0;
   let appliedCoupon = null;
   if (couponCode) {
     const couponResult = await evaluateCoupon(couponCode, subtotal);
     if (couponResult.error) return sendError(res, couponResult.error, 400);
-    discountAmount = couponResult.discountAmount;
+    discountAmount += couponResult.discountAmount;
     appliedCoupon = couponResult.coupon;
   }
 
@@ -155,6 +167,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
             orderId: order.id,
             productId: line.productId,
             variantId: line.variantId,
+            comboOfferId: line.comboOfferId || null,
             weight: line.weight,
             price: line.price,
             quantity: line.quantity,

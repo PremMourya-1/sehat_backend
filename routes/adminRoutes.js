@@ -53,6 +53,7 @@ const {
 const { getAllCmsPages, getCmsPageById, updateCmsPage } = require("../controllers/adminCmsController");
 const {
   getAllComboOffers,
+  getComboOfferById,
   createComboOffer,
   updateComboOffer,
   deleteComboOffer,
@@ -155,6 +156,7 @@ router.put("/cms/:id", updateCmsPage);
 
 // --- Combo Offers ---
 router.get("/combo-offers", getAllComboOffers);
+router.get("/combo-offers/:id", getComboOfferById);
 router.post("/combo-offers", createComboOffer);
 router.put("/combo-offers/:id", updateComboOffer);
 router.delete("/combo-offers/:id", deleteComboOffer);

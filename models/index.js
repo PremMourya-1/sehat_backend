@@ -14,6 +14,7 @@ const Coupon = require("./Coupon");
 const Testimonial = require("./Testimonial");
 const CmsPage = require("./CmsPage");
 const ComboOffer = require("./ComboOffer");
+const ComboOfferItem = require("./ComboOfferItem");
 const BlogPost = require("./BlogPost");
 const Faq = require("./Faq");
 const NewsletterSubscriber = require("./NewsletterSubscriber");
@@ -72,6 +73,23 @@ OrderItem.belongsTo(Product, { foreignKey: "productId" });
 ProductVariant.hasMany(OrderItem, { foreignKey: "variantId" });
 OrderItem.belongsTo(ProductVariant, { as: "variant", foreignKey: "variantId" });
 
+// ComboOffer <-> ComboOfferItem (the products a combo bundles)
+ComboOffer.hasMany(ComboOfferItem, { as: "items", foreignKey: "comboOfferId", onDelete: "CASCADE" });
+ComboOfferItem.belongsTo(ComboOffer, { foreignKey: "comboOfferId" });
+
+// Product / ProductVariant <-> ComboOfferItem
+Product.hasMany(ComboOfferItem, { foreignKey: "productId" });
+ComboOfferItem.belongsTo(Product, { foreignKey: "productId" });
+ProductVariant.hasMany(ComboOfferItem, { foreignKey: "variantId" });
+ComboOfferItem.belongsTo(ProductVariant, { as: "variant", foreignKey: "variantId" });
+
+// ComboOffer <-> OrderItem — nullable tag noting which combo an order line
+// came from (see utils/calculateSubtotal.js). SET NULL, not CASCADE: a
+// combo being edited/deleted later must never delete historical order
+// records — the OrderItem still stands on its own real productId/variantId.
+ComboOffer.hasMany(OrderItem, { foreignKey: "comboOfferId", onDelete: "SET NULL" });
+OrderItem.belongsTo(ComboOffer, { foreignKey: "comboOfferId" });
+
 // Product <-> ProductReview
 Product.hasMany(ProductReview, { as: "reviews", foreignKey: "productId", onDelete: "CASCADE" });
 ProductReview.belongsTo(Product, { foreignKey: "productId" });
@@ -107,6 +125,7 @@ module.exports = {
   Testimonial,
   CmsPage,
   ComboOffer,
+  ComboOfferItem,
   BlogPost,
   Faq,
   NewsletterSubscriber,
