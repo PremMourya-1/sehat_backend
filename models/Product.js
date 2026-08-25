@@ -4,6 +4,12 @@ const { sequelize } = require("../config/db");
 // Fixed set of allowed badge/tag values for Sehat Potli products.
 const ALLOWED_TAGS = ["100% Natural", "Rich in Nutrition", "Premium Quality", "Healthy Lifestyle"];
 
+// "Choose your base" filter tabs on the Build Your Own Mix page — a
+// separate lightweight tag, not the real Category model: existing
+// categories (e.g. "Single Dry Fruits") mix nuts and dried fruit together
+// and don't cleanly split into nuts/seeds/dried-fruit on their own.
+const ALLOWED_MIX_CATEGORIES = ["nuts", "seeds", "dried_fruit"];
+
 const Product = sequelize.define(
   "Product",
   {
@@ -72,6 +78,26 @@ const Product = sequelize.define(
         },
       },
     },
+    // Admin-toggled: only products flagged this way are selectable as
+    // ingredients on the Build Your Own Mix page (see
+    // controllers/mixController.js).
+    isMixIngredient: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    // Only meaningful when isMixIngredient is true — powers the "Choose
+    // your base" filter tab. Nullable: a product can be flagged as a mix
+    // ingredient before its category tag is set.
+    mixCategory: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      validate: {
+        isIn: {
+          args: [ALLOWED_MIX_CATEGORIES],
+          msg: `mixCategory must be one of: ${ALLOWED_MIX_CATEGORIES.join(", ")}`,
+        },
+      },
+    },
   },
   {
     tableName: "Products",
@@ -79,5 +105,6 @@ const Product = sequelize.define(
 );
 
 Product.ALLOWED_TAGS = ALLOWED_TAGS;
+Product.ALLOWED_MIX_CATEGORIES = ALLOWED_MIX_CATEGORIES;
 
 module.exports = Product;

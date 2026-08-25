@@ -18,6 +18,12 @@ const DEFAULT_SETTINGS = {
   // is always on regardless of these — they only gate the extra delivery
   // channels layered on top of it.
   notifications: { chromePushEnabled: true, toastPopupEnabled: true, soundEnabled: true },
+  // Weight options offered as pill buttons on the Build Your Own Mix page
+  // (see controllers/mixController.js, which serves this publicly) —
+  // customers can only add an ingredient in one of these increments, never
+  // a free-typed gram amount. Admin-editable (Settings → General), not
+  // hardcoded on the frontend, so new increments don't need a redeploy.
+  mixWeightIncrementsGrams: [100, 250, 500],
 };
 
 async function getSiteSettings() {

@@ -30,14 +30,20 @@ const orderItemIncludes = [
 const MOBILE_REGEX = /^[0-9]{10}$/;
 
 // POST /api/orders
-// body: { items: [{ variantId, quantity, comboOfferId? }], couponCode?, shippingName, shippingPhone,
-//         alternateMobile?, shippingAddress, shippingPincode,
+// body: { items: [{ variantId, quantity, comboOfferId? }], customMixes?: [{ name?, items: [{ productId, grams }] }],
+//         couponCode?, shippingName, shippingPhone, alternateMobile?, shippingAddress, shippingPincode,
 //         paymentMethod? ("cod" | "prepaid", defaults to "cod") }
 // A combo purchase is submitted pre-expanded into its real product/variant
 // lines (see sehat-potli-front's Utils/cartExpansion.js) tagged with the
 // combo's id — each still goes through normal stock/weight/COD handling
 // below as a real line item; only the pricing (see calculateSubtotal)
-// treats the tagged group specially.
+// treats the tagged group specially. A Build Your Own Mix instance is
+// submitted separately in `customMixes` (grams, not pack quantities) —
+// calculateSubtotal prices and flattens it into the same lineItems shape,
+// tagged `isMixLine: true`, which this function reads below to skip stock
+// decrement (see utils/calculateMixPricing.js for why: gram amounts don't
+// map cleanly onto the pack-based stock counter, so availability is gated
+// up front there instead of decremented here).
 // shippingCity/shippingState are never taken from the client — the customer
 // only ever enters/confirms a pincode (checked up front on the product page,
 // see checkoutController.checkPincode); city/state are resolved server-side
@@ -45,6 +51,7 @@ const MOBILE_REGEX = /^[0-9]{10}$/;
 exports.createOrder = asyncHandler(async (req, res) => {
   const {
     items,
+    customMixes,
     couponCode,
     shippingName,
     shippingPhone,
@@ -54,7 +61,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
     paymentMethod = "cod",
   } = req.body;
 
-  if (!Array.isArray(items) || items.length === 0) {
+  if ((!Array.isArray(items) || items.length === 0) && (!Array.isArray(customMixes) || customMixes.length === 0)) {
     return sendError(res, "Order must contain at least one item", 400);
   }
   if (!shippingName || !shippingPhone || !shippingAddress || !shippingPincode) {
@@ -70,7 +77,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
     return sendError(res, `paymentMethod must be one of: ${PAYMENT_METHODS.join(", ")}`, 400);
   }
 
-  const subtotalResult = await calculateSubtotal(items);
+  const subtotalResult = await calculateSubtotal(items || [], customMixes || []);
   if (subtotalResult.error) return sendError(res, subtotalResult.error, 400);
 
   const { subtotal, items: lineItems, comboDiscount } = subtotalResult;
@@ -101,8 +108,12 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const shippingCharge = await getShippingCharge(location.state);
   const total = Number((subtotal - discountAmount + shippingCharge).toFixed(2));
 
-  // Validate stock availability before committing the order.
+  // Validate stock availability before committing the order. Mix ingredient
+  // lines are skipped here — their availability was already gate-checked
+  // (in stock at all, yes/no) inside calculateMixPricing.js, since their
+  // gram amount has no clean relationship to this pack-count check.
   for (const line of lineItems) {
+    if (line.isMixLine) continue;
     const variant = await ProductVariant.findByPk(line.variantId);
     if (!variant || variant.stock < line.quantity) {
       return sendError(res, `Insufficient stock for one of the selected items`, 400);
@@ -168,12 +179,18 @@ exports.createOrder = asyncHandler(async (req, res) => {
             productId: line.productId,
             variantId: line.variantId,
             comboOfferId: line.comboOfferId || null,
+            customMixId: line.customMixId || null,
+            customMixName: line.customMixName || null,
             weight: line.weight,
             price: line.price,
             quantity: line.quantity,
           },
           { transaction: t },
         );
+
+        // See the stock pre-check above — mix ingredient grams don't
+        // decrement the pack-based stock counter.
+        if (line.isMixLine) continue;
 
         await ProductVariant.decrement("stock", {
           by: line.quantity,

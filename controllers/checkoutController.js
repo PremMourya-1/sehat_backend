@@ -48,17 +48,17 @@ exports.checkPincode = asyncHandler(async (req, res) => {
   return sendSuccess(res, { ...result, shippingCharge });
 });
 
-// POST /api/checkout/cod-availability  { items: [{ variantId, quantity }] }
+// POST /api/checkout/cod-availability  { items: [{ variantId, quantity }], customMixes?: [...] }
 // public, no auth. Lets checkout know whether to offer COD at all for the
 // customer's current cart, before they attempt to place the order (see
 // utils/checkCodAvailability.js — site-wide toggle + per-product override).
 exports.checkCodAvailability = asyncHandler(async (req, res) => {
-  const { items } = req.body;
-  if (!Array.isArray(items) || items.length === 0) {
+  const { items, customMixes } = req.body;
+  if ((!Array.isArray(items) || items.length === 0) && (!Array.isArray(customMixes) || customMixes.length === 0)) {
     return sendError(res, "items are required", 400);
   }
 
-  const subtotalResult = await calculateSubtotal(items);
+  const subtotalResult = await calculateSubtotal(items || [], customMixes || []);
   if (subtotalResult.error) return sendError(res, subtotalResult.error, 400);
 
   const result = await getCodAvailability(subtotalResult.items);

@@ -121,10 +121,23 @@ exports.getProductById = asyncHandler(async (req, res) => {
 
 // POST /api/admin/products  (multipart, up to 6 images)
 exports.createProduct = asyncHandler(async (req, res) => {
-  const { name, categoryId, shortDescription, longDescription, status, showOnHome, isTrending, codAvailable } =
-    req.body;
+  const {
+    name,
+    categoryId,
+    shortDescription,
+    longDescription,
+    status,
+    showOnHome,
+    isTrending,
+    codAvailable,
+    isMixIngredient,
+    mixCategory,
+  } = req.body;
 
   if (!name) return sendError(res, "Name is required", 400);
+  if (mixCategory && !Product.ALLOWED_MIX_CATEGORIES.includes(mixCategory)) {
+    return sendError(res, `Invalid mixCategory. Allowed: ${Product.ALLOWED_MIX_CATEGORIES.join(", ")}`, 400);
+  }
 
   const tags = parseTags(req.body.tags);
   const invalidTags = validateTags(tags);
@@ -147,6 +160,8 @@ exports.createProduct = asyncHandler(async (req, res) => {
     showOnHome: toBool(showOnHome, false),
     isTrending: toBool(isTrending, false),
     codAvailable: toBool(codAvailable, true),
+    isMixIngredient: toBool(isMixIngredient, false),
+    mixCategory: mixCategory || null,
     nutrition: nutrition || null,
     composition: composition || null,
   });
@@ -183,8 +198,22 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   const product = await Product.findByPk(req.params.id);
   if (!product) return sendError(res, "Product not found", 404);
 
-  const { name, categoryId, shortDescription, longDescription, status, showOnHome, isTrending, codAvailable } =
-    req.body;
+  const {
+    name,
+    categoryId,
+    shortDescription,
+    longDescription,
+    status,
+    showOnHome,
+    isTrending,
+    codAvailable,
+    isMixIngredient,
+    mixCategory,
+  } = req.body;
+
+  if (mixCategory && !Product.ALLOWED_MIX_CATEGORIES.includes(mixCategory)) {
+    return sendError(res, `Invalid mixCategory. Allowed: ${Product.ALLOWED_MIX_CATEGORIES.join(", ")}`, 400);
+  }
 
   if (req.body.tags !== undefined) {
     const tags = parseTags(req.body.tags);
@@ -201,6 +230,8 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   if (showOnHome !== undefined) product.showOnHome = toBool(showOnHome, product.showOnHome);
   if (isTrending !== undefined) product.isTrending = toBool(isTrending, product.isTrending);
   if (codAvailable !== undefined) product.codAvailable = toBool(codAvailable, product.codAvailable);
+  if (isMixIngredient !== undefined) product.isMixIngredient = toBool(isMixIngredient, product.isMixIngredient);
+  if (mixCategory !== undefined) product.mixCategory = mixCategory || null;
   if (req.body.nutrition !== undefined) product.nutrition = parseNutrition(req.body.nutrition) || null;
   if (req.body.composition !== undefined) product.composition = parseComposition(req.body.composition) || null;
 
