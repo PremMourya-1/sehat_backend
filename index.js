@@ -82,6 +82,7 @@ app.use(
       process.env.STORE_FRONT_URL2,
       process.env.STORE_ADMIN_URL,
       process.env.STORE_ADMIN_URL_LOCALE,
+      process.env.STORE_ADMIN_URL_LOCALE2,
     ],
     credentials: true,
   }),
