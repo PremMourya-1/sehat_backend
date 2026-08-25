@@ -9,6 +9,7 @@
     "dev:live": "cross-env DB_MODE=live nodemon index.js",
     "seed:admin": "node utils/seedAdmin.js",
     "seed:catalog": "node utils/seedCatalog.js",
+    "reset:admin-password": "node utils/resetAdminPassword.js",
     "lint": "eslint ."
   },
   "license": "ISC",
