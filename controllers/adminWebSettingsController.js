@@ -8,9 +8,9 @@ exports.getWebSettings = asyncHandler(async (req, res) => {
   return sendSuccess(res, settings);
 });
 
-// PUT /api/admin/web-settings  { codEnabled?, mobileVerificationRequired?, notifications?: { chromePushEnabled?, toastPopupEnabled?, soundEnabled? }, mixWeightIncrementsGrams?: number[] }
+// PUT /api/admin/web-settings  { codEnabled?, mobileVerificationRequired?, notifications?: { chromePushEnabled?, toastPopupEnabled?, soundEnabled? }, mixWeightIncrementsGrams?: number[], cartRewardMode?: "highest"|"all" }
 exports.updateWebSettings = asyncHandler(async (req, res) => {
-  const { codEnabled, mobileVerificationRequired, notifications, mixWeightIncrementsGrams } = req.body;
+  const { codEnabled, mobileVerificationRequired, notifications, mixWeightIncrementsGrams, cartRewardMode } = req.body;
   const patch = {};
   if (codEnabled !== undefined) patch.codEnabled = Boolean(codEnabled);
   if (mobileVerificationRequired !== undefined) patch.mobileVerificationRequired = Boolean(mobileVerificationRequired);
@@ -24,6 +24,13 @@ exports.updateWebSettings = asyncHandler(async (req, res) => {
       return sendError(res, "Each weight increment must be a positive whole number of grams", 400);
     }
     patch.mixWeightIncrementsGrams = [...new Set(values)].sort((a, b) => a - b);
+  }
+
+  if (cartRewardMode !== undefined) {
+    if (!["highest", "all"].includes(cartRewardMode)) {
+      return sendError(res, 'cartRewardMode must be "highest" or "all"', 400);
+    }
+    patch.cartRewardMode = cartRewardMode;
   }
 
   // `notifications` is a nested object — updateSiteSettings's merge-patch is

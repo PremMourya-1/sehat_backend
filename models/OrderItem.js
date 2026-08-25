@@ -47,6 +47,15 @@ const OrderItem = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    // True for a free-gift line added automatically by a qualifying
+    // CartRewardTier (see utils/calculateCartRewards.js) — price is always
+    // 0 on these rows. A real product/variant/stock-decrement line either
+    // way, unlike a mix ingredient: a reward gift is a normal shippable
+    // pack, not a loose bulk ingredient.
+    isFreeGift: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
   },
   {
     tableName: "OrderItems",

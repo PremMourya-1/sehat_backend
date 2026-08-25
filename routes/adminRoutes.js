@@ -89,6 +89,13 @@ const {
   updateShippingZone,
   deleteShippingZone,
 } = require("../controllers/adminShippingZoneController");
+const {
+  getAllCartRewardTiers,
+  getCartRewardTierById,
+  createCartRewardTier,
+  updateCartRewardTier,
+  deleteCartRewardTier,
+} = require("../controllers/adminCartRewardController");
 
 // --- Auth (login is the only unauthenticated admin route) ---
 router.post("/login", adminLogin);
@@ -203,5 +210,12 @@ router.get("/shipping-zones", getAllShippingZones);
 router.post("/shipping-zones", createShippingZone);
 router.put("/shipping-zones/:id", updateShippingZone);
 router.delete("/shipping-zones/:id", deleteShippingZone);
+
+// --- Cart Reward Tiers ("spend ₹X, get a free gift" — see utils/calculateSubtotal.js) ---
+router.get("/cart-rewards", getAllCartRewardTiers);
+router.get("/cart-rewards/:id", getCartRewardTierById);
+router.post("/cart-rewards", createCartRewardTier);
+router.put("/cart-rewards/:id", updateCartRewardTier);
+router.delete("/cart-rewards/:id", deleteCartRewardTier);
 
 module.exports = router;

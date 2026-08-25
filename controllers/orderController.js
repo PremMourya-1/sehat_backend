@@ -1,4 +1,4 @@
-const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem, ComboOffer } = require("../models");
+const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem, ComboOffer, CartRewardTier } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const calculateSubtotal = require("../utils/calculateSubtotal");
@@ -23,6 +23,7 @@ const orderItemIncludes = [
     include: [
       { model: Product, attributes: ["id", "name", "image"] },
       { model: ComboOffer, attributes: ["id", "title"] },
+      { model: CartRewardTier, as: "rewardTier", attributes: ["id", "label"] },
     ],
   },
 ];
@@ -80,7 +81,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const subtotalResult = await calculateSubtotal(items || [], customMixes || []);
   if (subtotalResult.error) return sendError(res, subtotalResult.error, 400);
 
-  const { subtotal, items: lineItems, comboDiscount } = subtotalResult;
+  const { subtotal, items: rawLineItems, comboDiscount } = subtotalResult;
 
   // Combo savings (subtotal, computed from each item's real price, minus
   // what the combo actually charges — see utils/calculateSubtotal.js) fold
@@ -112,12 +113,24 @@ exports.createOrder = asyncHandler(async (req, res) => {
   // lines are skipped here — their availability was already gate-checked
   // (in stock at all, yes/no) inside calculateMixPricing.js, since their
   // gram amount has no clean relationship to this pack-count check.
-  for (const line of lineItems) {
-    if (line.isMixLine) continue;
+  // Free-gift reward lines (see utils/calculateSubtotal.js) get a softer
+  // failure mode than everything else: this is one final live stock check
+  // since calculateSubtotal's own check may be stale by now (cart preview
+  // vs. actual order placement) — if it lost the race, the gift line is
+  // silently dropped rather than blocking the whole paid order over a free
+  // extra.
+  const lineItems = [];
+  for (const line of rawLineItems) {
+    if (line.isMixLine) {
+      lineItems.push(line);
+      continue;
+    }
     const variant = await ProductVariant.findByPk(line.variantId);
     if (!variant || variant.stock < line.quantity) {
+      if (line.isFreeGift) continue;
       return sendError(res, `Insufficient stock for one of the selected items`, 400);
     }
+    lineItems.push(line);
   }
 
   // Defense in depth: the storefront already gates Buy Now/checkout behind
@@ -181,6 +194,8 @@ exports.createOrder = asyncHandler(async (req, res) => {
             comboOfferId: line.comboOfferId || null,
             customMixId: line.customMixId || null,
             customMixName: line.customMixName || null,
+            rewardTierId: line.rewardTierId || null,
+            isFreeGift: line.isFreeGift || false,
             weight: line.weight,
             price: line.price,
             quantity: line.quantity,

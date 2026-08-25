@@ -28,6 +28,7 @@ const ShippingZone = require("./ShippingZone");
 const ShiprocketWebhookLog = require("./ShiprocketWebhookLog");
 const Expense = require("./Expense");
 const Sale = require("./Sale");
+const CartRewardTier = require("./CartRewardTier");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -90,6 +91,18 @@ ComboOfferItem.belongsTo(ProductVariant, { as: "variant", foreignKey: "variantId
 ComboOffer.hasMany(OrderItem, { foreignKey: "comboOfferId", onDelete: "SET NULL" });
 OrderItem.belongsTo(ComboOffer, { foreignKey: "comboOfferId" });
 
+// Product / ProductVariant <-> CartRewardTier (the free gift a tier gives)
+Product.hasMany(CartRewardTier, { foreignKey: "giftProductId" });
+CartRewardTier.belongsTo(Product, { as: "giftProduct", foreignKey: "giftProductId" });
+ProductVariant.hasMany(CartRewardTier, { foreignKey: "giftVariantId" });
+CartRewardTier.belongsTo(ProductVariant, { as: "giftVariant", foreignKey: "giftVariantId" });
+
+// CartRewardTier <-> OrderItem — same SET NULL reasoning as ComboOffer
+// above: a tier being edited/deleted later must never delete the
+// historical free-gift order record.
+CartRewardTier.hasMany(OrderItem, { foreignKey: "rewardTierId", onDelete: "SET NULL" });
+OrderItem.belongsTo(CartRewardTier, { as: "rewardTier", foreignKey: "rewardTierId" });
+
 // Product <-> ProductReview
 Product.hasMany(ProductReview, { as: "reviews", foreignKey: "productId", onDelete: "CASCADE" });
 ProductReview.belongsTo(Product, { foreignKey: "productId" });
@@ -139,4 +152,5 @@ module.exports = {
   ShiprocketWebhookLog,
   Expense,
   Sale,
+  CartRewardTier,
 };

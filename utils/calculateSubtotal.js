@@ -1,6 +1,7 @@
 const crypto = require("crypto");
-const { ProductVariant, ComboOffer, ComboOfferItem } = require("../models");
+const { ProductVariant, ComboOffer, ComboOfferItem, CartRewardTier } = require("../models");
 const { priceCustomMix } = require("./calculateMixPricing");
+const { getSiteSettings } = require("./webSettings");
 
 /**
  * Groups the already-priced line items by comboOfferId and checks each
@@ -116,6 +117,54 @@ async function calculateMixLines(customMixes) {
 }
 
 /**
+ * Auto-appends free-gift lines for whichever CartRewardTier(s) (see admin's
+ * Cart Rewards page) the cart's real subtotal qualifies for — the client
+ * never requests/selects a reward, this is computed entirely server-side,
+ * same trust boundary as the combo discount / mix pricing above.
+ * `cartRewardMode` ("highest" | "all", see WebSettings — admin-configurable)
+ * decides whether a cart clearing several thresholds at once gets only the
+ * single best-qualifying gift or every qualifying tier's gift stacked.
+ *
+ * A tier whose gift has zero stock is skipped outright here (advertising an
+ * unavailable gift would be misleading, mirroring the mix-ingredient
+ * philosophy in calculateMixLines above). A tier whose gift has SOME but
+ * insufficient stock for the full giftQuantity is still included — unlike
+ * every other line type, a reward line is allowed to be silently dropped
+ * later if it loses a stock race; see controllers/orderController.js, which
+ * does one more live check right before creating the order rather than
+ * failing the whole paid order over a free extra.
+ */
+async function calculateRewardLines(paidSubtotal) {
+  const tiers = await CartRewardTier.findAll({
+    where: { status: true },
+    order: [["minCartAmount", "ASC"]],
+  });
+  const qualifying = tiers.filter((tier) => paidSubtotal >= Number(tier.minCartAmount));
+  if (qualifying.length === 0) return { rewardLines: [] };
+
+  const { cartRewardMode } = await getSiteSettings();
+  const selected = cartRewardMode === "all" ? qualifying : [qualifying[qualifying.length - 1]];
+
+  const rewardLines = [];
+  for (const tier of selected) {
+    if (!tier.giftVariantId) continue;
+    const variant = await ProductVariant.findByPk(tier.giftVariantId);
+    if (!variant || variant.stock <= 0) continue;
+    rewardLines.push({
+      variantId: tier.giftVariantId,
+      productId: tier.giftProductId,
+      weight: variant.weight,
+      price: 0,
+      quantity: tier.giftQuantity,
+      comboOfferId: null,
+      rewardTierId: tier.id,
+      isFreeGift: true,
+    });
+  }
+  return { rewardLines };
+}
+
+/**
  * Given an array of { variantId, quantity, comboOfferId? } plus an optional
  * array of custom mixes ({ name?, items: [{ productId, variantId, grams }] }),
  * look up each ProductVariant's price (not the Product's — pricing lives on
@@ -129,7 +178,7 @@ async function calculateMixLines(customMixes) {
  *
  * Returns { error: string } if any variantId is invalid, a combo selection
  * doesn't check out, or a mix is invalid, otherwise
- * { subtotal, items: [{ variantId, productId, weight, price, quantity, comboOfferId, customMixId?, isMixLine? }], comboDiscount }.
+ * { subtotal, items: [{ variantId, productId, weight, price, quantity, comboOfferId, customMixId?, isMixLine?, rewardTierId?, isFreeGift? }], comboDiscount }.
  */
 async function calculateSubtotal(cartItems, customMixes = []) {
   let subtotal = 0;
@@ -159,9 +208,12 @@ async function calculateSubtotal(cartItems, customMixes = []) {
   const mixResult = await calculateMixLines(customMixes);
   if (mixResult.error) return { error: mixResult.error };
 
+  const totalSubtotal = Number((subtotal + mixResult.mixSubtotal).toFixed(2));
+  const rewardResult = await calculateRewardLines(totalSubtotal);
+
   return {
-    subtotal: Number((subtotal + mixResult.mixSubtotal).toFixed(2)),
-    items: [...items, ...mixResult.mixLines],
+    subtotal: totalSubtotal,
+    items: [...items, ...mixResult.mixLines, ...rewardResult.rewardLines],
     comboDiscount: comboResult.comboDiscount,
   };
 }

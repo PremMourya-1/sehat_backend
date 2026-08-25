@@ -24,6 +24,10 @@ const DEFAULT_SETTINGS = {
   // a free-typed gram amount. Admin-editable (Settings → General), not
   // hardcoded on the frontend, so new increments don't need a redeploy.
   mixWeightIncrementsGrams: [100, 250, 500],
+  // "highest" = only the single best-qualifying CartRewardTier's gift is
+  // added to the order; "all" = every tier the cart's subtotal clears gets
+  // its own free gift line, stacked. See utils/calculateCartRewards.js.
+  cartRewardMode: "highest",
 };
 
 async function getSiteSettings() {
