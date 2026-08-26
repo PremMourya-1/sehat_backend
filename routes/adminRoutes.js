@@ -5,7 +5,7 @@ const adminAuth = require("../middleware/adminAuth");
 const upload = require("../middleware/upload");
 
 const { adminLogin, adminLogout, adminChangePassword } = require("../controllers/adminAuthController");
-const { getDashboardStats } = require("../controllers/adminDashboardController");
+const { getDashboardStats, getWalletBalanceStat } = require("../controllers/adminDashboardController");
 const {
   getAllProducts,
   getProductById: getAdminProductById,
@@ -65,6 +65,7 @@ const {
   deleteBlogPost,
 } = require("../controllers/adminBlogPostController");
 const { getAllFaqs, createFaq, updateFaq, deleteFaq } = require("../controllers/adminFaqController");
+const { getAllReviews, approveReview, deleteReview } = require("../controllers/adminReviewController");
 const {
   getAllSubscribers,
   deleteSubscriber,
@@ -109,6 +110,7 @@ router.put("/change-password", adminChangePassword);
 
 // --- Dashboard ---
 router.get("/dashboard", getDashboardStats);
+router.get("/dashboard/wallet-balance", getWalletBalanceStat);
 
 // --- Products ---
 router.get("/products", getAllProducts);
@@ -180,6 +182,11 @@ router.get("/faqs", getAllFaqs);
 router.post("/faqs", createFaq);
 router.put("/faqs/:id", updateFaq);
 router.delete("/faqs/:id", deleteFaq);
+
+// --- Product Reviews (moderation only — created by customers) ---
+router.get("/reviews", getAllReviews);
+router.put("/reviews/:id/approve", approveReview);
+router.delete("/reviews/:id", deleteReview);
 
 // --- Newsletter Subscribers (read + delete only, no add/edit) ---
 router.get("/newsletter-subscribers", getAllSubscribers);

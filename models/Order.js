@@ -155,6 +155,14 @@ const Order = sequelize.define(
     // null until AWB assignment succeeds, so the tracking page has nothing
     // to show before dispatch.
     estimatedDeliveryDate: { type: DataTypes.DATE, allowNull: true },
+    // The REAL amount Shiprocket charges/deducts from the wallet for this
+    // shipment — the selected courier's own rate at AWB-assignment time (see
+    // utils/shiprocket.js assignAWB/getCourierRate). Deliberately separate
+    // from shippingCharge above, which is the flat ShippingZone rate charged
+    // to the CUSTOMER — the two are unrelated numbers; comparing them is
+    // exactly how the admin sees actual margin per order. Null until AWB
+    // assignment succeeds, same lifecycle as estimatedDeliveryDate.
+    shippingCostActual: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
 
     // Pickup scheduling (see utils/shiprocket.js schedulePickup/cancelPickup).
     pickupStatus: {

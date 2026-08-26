@@ -133,11 +133,21 @@ function buildOrderOutForDeliveryHtml(order) {
 }
 
 function buildOrderDeliveredHtml(order) {
+  // STORE_FRONT_URL is already used for CORS (see index.js) — same env var,
+  // reused here as the base for the review-prompt link. The order detail
+  // page itself renders the actual "Rate this product" prompts (see
+  // Components/Account/ReviewPrompt.js), this just gets the customer there.
+  const reviewUrl = `${process.env.STORE_FRONT_URL || "https://sehatpotli.in"}/account/orders/${order.id}`;
   return `
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #F5EDE0; border-radius: 12px;">
       <h2 style="color: #2E4A3B; margin-bottom: 4px;">Sehat Potli</h2>
       <p style="color: #2A2A28; font-size: 15px;">
         Your order <strong>${order.orderNumber}</strong> has been delivered. We hope you enjoy it!
+      </p>
+      <p style="text-align: center; margin-top: 20px;">
+        <a href="${reviewUrl}" style="display: inline-block; background: #2E4A3B; color: #F5EDE0; text-decoration: none; padding: 10px 22px; border-radius: 999px; font-size: 14px; font-weight: 600;">
+          Rate Your Purchase
+        </a>
       </p>
       <p style="color: #C89B3C; font-size: 13px; margin-top: 24px;">Team Sehat Potli — Pure. Natural. Wholesome.</p>
     </div>

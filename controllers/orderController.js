@@ -1,4 +1,4 @@
-const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem, ComboOffer, CartRewardTier } = require("../models");
+const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem, ComboOffer, CartRewardTier, ProductReview } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const calculateSubtotal = require("../utils/calculateSubtotal");
@@ -303,6 +303,10 @@ exports.getRecentOrders = asyncHandler(async (req, res) => {
 // Shiprocket's public tracking page is keyed by AWB code alone (no account
 // login needed on the customer's side), so trackingUrl is null until an AWB
 // has actually been assigned (see utils/shiprocket.js assignAWBWithRetry).
+// Once delivered, also resolves `reviewedProductIds` — every productId this
+// customer has already reviewed for THIS specific order — so the frontend's
+// "Rate this product" prompt (see Components/Account/ReviewPrompt.js) only
+// ever shows for items not yet reviewed.
 exports.getOrderById = asyncHandler(async (req, res) => {
   const order = await Order.findOne({
     where: { id: req.params.id, customerId: req.customer.id },
@@ -310,8 +314,18 @@ exports.getOrderById = asyncHandler(async (req, res) => {
   });
   if (!order) return sendError(res, "Order not found", 404);
 
+  let reviewedProductIds = [];
+  if (order.customerStatus === "delivered") {
+    const reviews = await ProductReview.findAll({
+      where: { orderId: order.id, customerId: req.customer.id },
+      attributes: ["productId"],
+      raw: true,
+    });
+    reviewedProductIds = reviews.map((r) => r.productId);
+  }
+
   const trackingUrl = order.awbCode ? `https://shiprocket.co/tracking/${order.awbCode}` : null;
-  return sendSuccess(res, { ...order.toJSON(), trackingUrl });
+  return sendSuccess(res, { ...order.toJSON(), trackingUrl, reviewedProductIds });
 });
 
 // POST /api/orders/:id/cancel  { reason? }

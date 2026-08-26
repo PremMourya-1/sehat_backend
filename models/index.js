@@ -107,6 +107,15 @@ OrderItem.belongsTo(CartRewardTier, { as: "rewardTier", foreignKey: "rewardTierI
 Product.hasMany(ProductReview, { as: "reviews", foreignKey: "productId", onDelete: "CASCADE" });
 ProductReview.belongsTo(Product, { foreignKey: "productId" });
 
+// Customer <-> ProductReview
+Customer.hasMany(ProductReview, { foreignKey: "customerId" });
+ProductReview.belongsTo(Customer, { foreignKey: "customerId" });
+
+// Order <-> ProductReview — the specific delivered order a review is proof-
+// of-purchase against (see controllers/reviewController.js).
+Order.hasMany(ProductReview, { foreignKey: "orderId" });
+ProductReview.belongsTo(Order, { foreignKey: "orderId" });
+
 // Customer <-> Account (Auth.js linked OAuth identities)
 Customer.hasMany(Account, { foreignKey: "userId", onDelete: "CASCADE" });
 Account.belongsTo(Customer, { foreignKey: "userId" });

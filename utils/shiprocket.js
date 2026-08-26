@@ -377,6 +377,31 @@ async function createShiprocketOrder(orderId) {
   }
 }
 
+// Account-level wallet balance (Shiprocket deducts real shipping cost from
+// this on every AWB assignment — see shippingCostActual above) — confirmed
+// endpoint path from a real third-party Shiprocket SDK
+// (github.com/Aniket-IN/laravel-shiprocket's WalletResource), since
+// apidocs.shiprocket.in is the same JS-rendered SPA noted elsewhere in this
+// file that can't be fetched for exact specifics. The response's exact
+// field name for the balance isn't confirmed anywhere reliable either, so
+// — same defensive approach as getCourierRate/getPickupDateFromResponse
+// above — this checks every plausible shape rather than assuming one.
+async function getWalletBalance() {
+  const data = await authenticatedRequest("/account/details/wallet-balance", { method: "GET" });
+  const raw =
+    data?.data?.balance_amount ??
+    data?.balance_amount ??
+    data?.data?.wallet_balance ??
+    data?.wallet_balance ??
+    data?.data?.balance ??
+    data?.balance;
+  const balance = Number(raw);
+  if (!Number.isFinite(balance)) {
+    throw new Error("Shiprocket wallet-balance response didn't include a recognizable balance field");
+  }
+  return balance;
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3 — courier serviceability + AWB assignment.
 // ---------------------------------------------------------------------------
@@ -556,6 +581,14 @@ async function assignAWB(shipmentId, courier) {
     // response itself — Shiprocket's AWB-assign response doesn't carry a
     // delivery estimate, only the serviceability check does.
     estimatedDeliveryDate: getCourierEstimatedDeliveryDate(courier),
+    // Same reasoning — the AWB-assign response doesn't echo back a rate,
+    // only the serviceability check does. This is the REAL amount
+    // Shiprocket charges the wallet, separate from the flat ShippingZone
+    // rate charged to the customer (Order.shippingCharge). getCourierRate()
+    // returns Infinity as a sort-to-the-end sentinel for an unparseable
+    // rate (see sortCouriersByCheapest) — never a real value to persist, so
+    // that case is stored as null instead.
+    shippingCostActual: Number.isFinite(getCourierRate(courier)) ? getCourierRate(courier) : null,
   };
 }
 
@@ -617,6 +650,7 @@ async function assignAWBWithRetry(shipmentId, courierList) {
       courierCompanyId: awbResult.courierCompanyId,
       courierName: awbResult.courierName,
       estimatedDeliveryDate: awbResult.estimatedDeliveryDate,
+      shippingCostActual: awbResult.shippingCostActual,
       awbStatus: "assigned",
       awbAssignedAt: new Date(),
       lastAwbError: null,
@@ -1152,6 +1186,7 @@ module.exports = {
   getToken,
   authenticatedRequest,
   invalidateToken,
+  getWalletBalance,
   createShiprocketOrder,
   checkServiceability,
   checkPincodeServiceability,
