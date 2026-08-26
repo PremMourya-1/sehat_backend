@@ -88,3 +88,77 @@ exports.clearCart = asyncHandler(async (req, res) => {
   await CartItem.destroy({ where: { cartId: cart.id } });
   return sendSuccess(res, null, "Cart cleared");
 });
+
+// POST /api/cart/merge  { items: [{ variantId, quantity }] }
+// Called once, right after a guest with items sitting in their
+// localStorage cart logs in (see sehat-potli-front's StoreProvider.js) —
+// combines those into whatever's already in this customer's DB cart
+// (e.g. left over from a previous session on another device). An empty
+// `items` array is a valid, common call (nothing to merge) and just
+// returns the customer's existing cart as-is — effectively "load my
+// cart" for an already-logged-in return visit.
+//
+// Overlapping variants SUM their quantities rather than taking the
+// higher of the two: the ordinary case is the exact same item
+// independently added on two separate sessions/devices, and a customer
+// expects both adds to count — this is the same rule addToCart above
+// already applies to a repeat add of the same variant within one
+// session, so merge just extends it across sessions instead of picking
+// a different, surprising rule for the same situation.
+exports.mergeCart = asyncHandler(async (req, res) => {
+  const { items } = req.body;
+  const cart = await getOrCreateCart(req.customer.id);
+
+  if (Array.isArray(items)) {
+    for (const entry of items) {
+      const variantId = entry?.variantId;
+      if (!variantId) continue;
+      const quantity = Number(entry.quantity) > 0 ? Number(entry.quantity) : 1;
+
+      const variant = await ProductVariant.findByPk(variantId);
+      if (!variant) continue; // stale/deleted variant from an old localStorage cart
+
+      const existing = await CartItem.findOne({ where: { cartId: cart.id, variantId } });
+      if (existing) {
+        existing.quantity += quantity;
+        await existing.save();
+      } else {
+        await CartItem.create({ cartId: cart.id, productId: variant.productId, variantId, quantity });
+      }
+    }
+  }
+
+  const mergedItems = await CartItem.findAll({ where: { cartId: cart.id }, include: cartItemIncludes });
+  return sendSuccess(res, { cartId: cart.id, items: mergedItems }, "Cart merged successfully");
+});
+
+// PUT /api/cart/sync  { items: [{ variantId, quantity }] }
+// A full replace, not an incremental update — called on a debounce for
+// every cart change a logged-in customer makes (StoreProvider.js again).
+// Once logged in, the frontend's Redux cart is already the authoritative
+// in-progress state (every add/update/remove happened there instantly
+// for a responsive UI, no round-trip needed) — this just mirrors that
+// exact state into the DB so it survives a reload or shows up on another
+// device. Simpler and more robust than threading individual CartItem row
+// ids back to the client to support granular add/update/remove calls.
+exports.syncCart = asyncHandler(async (req, res) => {
+  const { items } = req.body;
+  const cart = await getOrCreateCart(req.customer.id);
+
+  await CartItem.destroy({ where: { cartId: cart.id } });
+
+  if (Array.isArray(items)) {
+    for (const entry of items) {
+      const variantId = entry?.variantId;
+      if (!variantId) continue;
+      const quantity = Number(entry.quantity) > 0 ? Number(entry.quantity) : 1;
+
+      const variant = await ProductVariant.findByPk(variantId);
+      if (!variant) continue;
+
+      await CartItem.create({ cartId: cart.id, productId: variant.productId, variantId, quantity });
+    }
+  }
+
+  return sendSuccess(res, null, "Cart synced");
+});

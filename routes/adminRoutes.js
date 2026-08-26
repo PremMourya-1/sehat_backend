@@ -96,6 +96,7 @@ const {
   updateCartRewardTier,
   deleteCartRewardTier,
 } = require("../controllers/adminCartRewardController");
+const { cleanupAbandonedCarts } = require("../controllers/adminCartController");
 
 // --- Auth (login is the only unauthenticated admin route) ---
 router.post("/login", adminLogin);
@@ -217,5 +218,8 @@ router.get("/cart-rewards/:id", getCartRewardTierById);
 router.post("/cart-rewards", createCartRewardTier);
 router.put("/cart-rewards/:id", updateCartRewardTier);
 router.delete("/cart-rewards/:id", deleteCartRewardTier);
+
+// --- Cart housekeeping (abandoned Cart/CartItem cleanup — see adminCartController.js) ---
+router.post("/carts/cleanup-abandoned", cleanupAbandonedCarts);
 
 module.exports = router;
