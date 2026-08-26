@@ -28,6 +28,24 @@ const DEFAULT_SETTINGS = {
   // added to the order; "all" = every tier the cart's subtotal clears gets
   // its own free gift line, stacked. See utils/calculateCartRewards.js.
   cartRewardMode: "highest",
+  // Pre-launch / sale hype countdown banner (see
+  // Components/Common/LaunchCountdownBanner.js on the frontend, served
+  // publicly and unauthenticated via GET /api/web-settings/launch-countdown
+  // so it works for logged-out visitors too). Reusable for any future
+  // "sale starts in..." campaign, not just the initial launch — admin just
+  // edits title/description/targetDate/position and flips `enabled` again.
+  // `position` is "below-header" (static bar under the header, scrolls
+  // with the page) or "fixed-center" (floating card, fixed to the
+  // viewport center regardless of scroll). The frontend also auto-hides
+  // it the moment `targetDate` is in the past, so nothing needs to
+  // happen here at launch time unless a new campaign is being set up.
+  launchCountdown: {
+    enabled: false,
+    title: "Sehat Potli is launching soon.",
+    description: "Get ready to shop goodness for every home.",
+    targetDate: null,
+    position: "below-header",
+  },
 };
 
 async function getSiteSettings() {

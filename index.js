@@ -38,6 +38,7 @@ const mixRoutes = require("./routes/mixRoutes");
 const cartRewardRoutes = require("./routes/cartRewardRoutes");
 const blogRoutes = require("./routes/blogRoutes");
 const faqRoutes = require("./routes/faqRoutes");
+const webSettingsRoutes = require("./routes/webSettingsRoutes");
 const newsletterRoutes = require("./routes/newsletterRoutes");
 const expensesRoutes = require("./routes/expensesRoutes");
 const salesRoutes = require("./routes/salesRoutes");
@@ -115,6 +116,7 @@ app.use("/api/mix-ingredients", mixRoutes);
 app.use("/api/cart-reward-tiers", cartRewardRoutes);
 app.use("/api/blog-posts", blogRoutes);
 app.use("/api/faqs", faqRoutes);
+app.use("/api/web-settings", webSettingsRoutes);
 app.use("/api/newsletter", newsletterRoutes);
 // Fully separate auth system from /api/admin — see FINANCE.md. Sales
 // shares the exact same login/middleware as Expenses (see

@@ -1103,25 +1103,43 @@ async function processStatusUpdate(orderId, rawStatus) {
   return { success: true, orderId: order.id, customerStatus: nextStatus, emailTriggered };
 }
 
-// Resolves which order a real Shiprocket webhook payload is about (by
-// shiprocketShipmentId first, matching every other lookup in this file,
-// falling back to shiprocketOrderId in case a given payload only carries
-// one or the other), then delegates to processStatusUpdate above. Called
-// from controllers/webhookController.js, which verifies the webhook secret
-// and persists the raw payload (ShiprocketWebhookLog) before this runs.
+// Resolves which order a real Shiprocket webhook payload is about, then
+// delegates to processStatusUpdate above. Called from
+// controllers/webhookController.js, which verifies the webhook secret and
+// persists the raw payload (ShiprocketWebhookLog) before this runs.
+//
+// IMPORTANT — confirmed against real production payloads on 2026-08-27
+// (not just Shiprocket's docs, which don't spell this out): the courier
+// status webhook does NOT reuse the `order_id`/`shipment_id` field names
+// from the order-creation response (`/orders/create/adhoc`, see
+// createShiprocketOrder above) the way this function originally assumed.
+// A real webhook body instead looks like:
+//   { awb: "1319460818628", sr_order_id: 1540758693,
+//     order_id: "ORD-1787673804350", current_status: "PICKED UP", ... }
+// i.e. `shipment_id` isn't present at all, `sr_order_id` is Shiprocket's
+// own order id (what we store as Order.shiprocketOrderId), and `order_id`
+// here is actually OUR channel order number echoed back — matches
+// Order.orderNumber, not Order.shiprocketOrderId. Getting this wrong meant
+// every real webhook silently failed to match any order (logged with
+// orderId: null) while the admin-simulation tool — which calls
+// processStatusUpdate directly with an orderId already in hand — kept
+// working, masking the bug. `awb` is checked first since it's the most
+// direct/unique identifier for one shipment; the other two are fallbacks
+// in case a payload variant ever omits it.
 async function handleShiprocketStatusWebhook(payload) {
-  const shipmentId = payload?.shipment_id;
-  const shiprocketOrderId = payload?.order_id;
+  const awbCode = payload?.awb ?? payload?.awb_code;
+  const srOrderId = payload?.sr_order_id;
+  const ourOrderNumber = payload?.order_id;
   const rawStatus = payload?.current_status ?? payload?.shipment_status;
 
-  const order = shipmentId
-    ? await Order.findOne({ where: { shiprocketShipmentId: String(shipmentId) } })
-    : shiprocketOrderId
-      ? await Order.findOne({ where: { shiprocketOrderId: String(shiprocketOrderId) } })
-      : null;
+  const order =
+    (awbCode && (await Order.findOne({ where: { awbCode: String(awbCode) } }))) ||
+    (srOrderId && (await Order.findOne({ where: { shiprocketOrderId: String(srOrderId) } }))) ||
+    (ourOrderNumber && (await Order.findOne({ where: { orderNumber: String(ourOrderNumber) } }))) ||
+    null;
 
   if (!order) {
-    const error = `No order found for Shiprocket shipment/order (shipment_id=${shipmentId}, order_id=${shiprocketOrderId})`;
+    const error = `No order found for Shiprocket webhook (awb=${awbCode}, sr_order_id=${srOrderId}, order_id=${ourOrderNumber})`;
     console.error(`Shiprocket webhook: ${error}`);
     return { success: false, error, orderId: null };
   }
