@@ -12,6 +12,7 @@ const {
   getBreakdown,
   getBestSellers,
 } = require("../controllers/adminAnalyticsController");
+const { previewPricing, bulkUpdatePricing } = require("../controllers/adminPricingController");
 const {
   getAllProducts,
   getProductById: getAdminProductById,
@@ -123,6 +124,10 @@ router.get("/analytics/overview", getOverview);
 router.get("/analytics/trends", getTrends);
 router.get("/analytics/breakdown", getBreakdown);
 router.get("/analytics/best-sellers", getBestSellers);
+
+// --- Product Pricing ---
+router.get("/pricing/preview", previewPricing);
+router.post("/pricing/bulk-update", bulkUpdatePricing);
 
 // --- Products ---
 router.get("/products", getAllProducts);

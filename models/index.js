@@ -29,6 +29,7 @@ const ShiprocketWebhookLog = require("./ShiprocketWebhookLog");
 const Expense = require("./Expense");
 const Sale = require("./Sale");
 const CartRewardTier = require("./CartRewardTier");
+const PriceUpdateLog = require("./PriceUpdateLog");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -124,6 +125,11 @@ Account.belongsTo(Customer, { foreignKey: "userId" });
 Order.hasMany(Notification, { foreignKey: "orderId", onDelete: "CASCADE" });
 Notification.belongsTo(Order, { foreignKey: "orderId" });
 
+// Admin <-> PriceUpdateLog (audit trail for the "Manage Product Pricing"
+// tool — see controllers/adminPricingController.js).
+Admin.hasMany(PriceUpdateLog, { foreignKey: "adminId" });
+PriceUpdateLog.belongsTo(Admin, { foreignKey: "adminId" });
+
 // Order <-> ShiprocketWebhookLog (raw webhook audit trail — orderId is
 // nullable so an unmatched webhook still gets logged, hence no onDelete
 // cascade here: a log row should outlive the order it referenced).
@@ -162,4 +168,5 @@ module.exports = {
   Expense,
   Sale,
   CartRewardTier,
+  PriceUpdateLog,
 };
