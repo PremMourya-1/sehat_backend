@@ -17,7 +17,11 @@ const DEFAULT_SETTINGS = {
   // The in-app bell/drawer notification (see utils/socket.js emitNewOrder)
   // is always on regardless of these — they only gate the extra delivery
   // channels layered on top of it.
-  notifications: { chromePushEnabled: true, toastPopupEnabled: true, soundEnabled: true },
+  notifications: {
+    chromePushEnabled: true,
+    toastPopupEnabled: true,
+    soundEnabled: true,
+  },
   // Weight options offered as pill buttons on the Build Your Own Mix page
   // (see controllers/mixController.js, which serves this publicly) —
   // customers can only add an ingredient in one of these increments, never
@@ -43,13 +47,16 @@ const DEFAULT_SETTINGS = {
     enabled: false,
     title: "Sehat Potli is launching soon.",
     description: "Get ready to shop goodness for every home.",
+    endText: "Website launched. Welcome to Sehat Potli!",
     targetDate: null,
     position: "below-header",
   },
 };
 
 async function getSiteSettings() {
-  const row = await WebSetting.findOne({ where: { settingKey: SITE_SETTINGS_KEY } });
+  const row = await WebSetting.findOne({
+    where: { settingKey: SITE_SETTINGS_KEY },
+  });
   return { ...DEFAULT_SETTINGS, ...(row?.value || {}) };
 }
 
@@ -59,7 +66,9 @@ async function updateSiteSettings(patch) {
   const current = await getSiteSettings();
   const next = { ...current, ...patch };
 
-  const row = await WebSetting.findOne({ where: { settingKey: SITE_SETTINGS_KEY } });
+  const row = await WebSetting.findOne({
+    where: { settingKey: SITE_SETTINGS_KEY },
+  });
   if (row) {
     row.value = next;
     await row.save();
