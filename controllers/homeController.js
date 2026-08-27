@@ -1,34 +1,10 @@
 const { Op } = require("sequelize");
-const { HeroBanner, Category, Testimonial, ComboOffer, ComboOfferItem, ProductVariant } = require("../models");
+const { HeroBanner, Category, Testimonial, ComboOffer } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess } = require("../utils/response");
 const { serializeProduct, productIncludes } = require("./productController");
+const { comboOfferIncludes, serializeComboOffer } = require("../utils/comboOfferPresenter");
 const { Product } = require("../models");
-
-const comboOfferIncludes = [
-  {
-    model: ComboOfferItem,
-    as: "items",
-    separate: true,
-    order: [["sortOrder", "ASC"]],
-    include: [
-      { model: Product, attributes: ["id", "name", "image"] },
-      { model: ProductVariant, as: "variant", attributes: ["id", "weight", "price", "mrp"] },
-    ],
-  },
-];
-
-// Adds a computed `individualTotal` (sum of each item's own variant price
-// × quantity) alongside the stored `comboPrice`, so the storefront can show
-// "you save ₹X" without recomputing combo math client-side.
-function serializeComboOffer(offer) {
-  const plain = offer.toJSON ? offer.toJSON() : offer;
-  const individualTotal = (plain.items || []).reduce(
-    (sum, item) => sum + Number(item.variant?.price || 0) * item.quantity,
-    0,
-  );
-  return { ...plain, individualTotal: Number(individualTotal.toFixed(2)) };
-}
 
 // GET /api/home — every piece of data the storefront homepage needs, in one
 // call. Individual admin-managed resources still have their own public
