@@ -7,6 +7,12 @@ const upload = require("../middleware/upload");
 const { adminLogin, adminLogout, adminChangePassword } = require("../controllers/adminAuthController");
 const { getDashboardStats, getWalletBalanceStat } = require("../controllers/adminDashboardController");
 const {
+  getOverview,
+  getTrends,
+  getBreakdown,
+  getBestSellers,
+} = require("../controllers/adminAnalyticsController");
+const {
   getAllProducts,
   getProductById: getAdminProductById,
   createProduct,
@@ -111,6 +117,12 @@ router.put("/change-password", adminChangePassword);
 // --- Dashboard ---
 router.get("/dashboard", getDashboardStats);
 router.get("/dashboard/wallet-balance", getWalletBalanceStat);
+
+// --- Analytics ---
+router.get("/analytics/overview", getOverview);
+router.get("/analytics/trends", getTrends);
+router.get("/analytics/breakdown", getBreakdown);
+router.get("/analytics/best-sellers", getBestSellers);
 
 // --- Products ---
 router.get("/products", getAllProducts);
