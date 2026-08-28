@@ -7,8 +7,7 @@ const {
 } = require("../models");
 const { encrypt, decrypt } = require("./encryption");
 const { retryAsync } = require("./retry");
-const { sendOrderOutForDeliveryEmail } = require("./email");
-const { notifyOrderDispatched, notifyOrderDelivered } = require("./notifications");
+const { notifyOrderDispatched, notifyOrderOutForDelivery, notifyOrderDelivered } = require("./notifications");
 
 const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 const INTEGRATION_KEY = "shiprocket";
@@ -1125,10 +1124,8 @@ async function processStatusUpdate(orderId, rawStatus) {
     );
   } else if (nextStatus === "out_for_delivery") {
     emailTriggered = "out-for-delivery";
-    // No WhatsApp template for this event (see utils/notifications.js) —
-    // always email, regardless of the order's notificationChannel.
-    sendOrderOutForDeliveryEmail(order.id).catch((err) =>
-      console.error(`Email: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    notifyOrderOutForDelivery(order.id).catch((err) =>
+      console.error(`Notification: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
     );
   } else if (nextStatus === "delivered") {
     emailTriggered = "delivered";

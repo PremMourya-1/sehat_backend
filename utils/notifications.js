@@ -1,6 +1,11 @@
 const { Order } = require("../models");
-const { sendOrderConfirmedEmail, sendOrderPackedEmail, sendOrderDeliveredEmail } = require("./email");
-const { sendOrderConfirmedWhatsApp, sendOrderDispatchedWhatsApp, sendOrderDeliveredWhatsApp } = require("./whatsapp");
+const { sendOrderConfirmedEmail, sendOrderPackedEmail, sendOrderOutForDeliveryEmail, sendOrderDeliveredEmail } = require("./email");
+const {
+  sendOrderConfirmedWhatsApp,
+  sendOrderDispatchedWhatsApp,
+  sendOrderOutForDeliveryWhatsApp,
+  sendOrderDeliveredWhatsApp,
+} = require("./whatsapp");
 
 // Single-channel order-status notification dispatch. Each order snapshots
 // WebSettings' notificationChannel ("email" | "whatsapp") once, at creation
@@ -8,29 +13,19 @@ const { sendOrderConfirmedWhatsApp, sendOrderDispatchedWhatsApp, sendOrderDelive
 // utils/webSettings.js) into its own Order.notificationChannel — never
 // changed afterward, so an order keeps using whichever channel was active
 // when it was placed even if the admin flips the site-wide setting later.
-// These three functions are what every trigger point below now calls
+// These four functions are what every trigger point below now calls
 // instead of firing both sendOrderXEmail AND sendOrderXWhatsApp in
 // parallel (the previous behavior) — same never-throws contract as the
 // underlying senders they wrap, so callers can keep fire-and-forgetting
 // exactly as before.
 //
-// Only 3 events have a WhatsApp counterpart at all (order_confirmed/
-// order_dispatched/order_delivered templates) — out-for-delivery and
-// cancelled emails have no WhatsApp template and are NOT routed through
-// here, they keep sending unconditionally via email regardless of channel
-// (see utils/shiprocket.js's out_for_delivery branch and
-// utils/orderCancellation.js).
-//
-// TEMPORARY: only the order_confirmed WhatsApp template is Meta-approved
-// so far (order_dispatched/order_delivered are still pending review — see
-// memory/whatsapp_integration_architecture.md). An order on the
-// "whatsapp" channel gets a real order-confirmed WhatsApp message today,
-// but its dispatched/delivered WhatsApp sends will fail cleanly (Meta
-// rejects an unapproved/unknown template name — sendOrderDispatchedWhatsApp/
-// sendOrderDeliveredWhatsApp already log the error and return
-// { success: false }, same as any other send failure) rather than block
-// anything. Nothing here needs to change once the remaining templates are
-// approved — delete this paragraph then.
+// All 4 order-status events (confirmed/dispatched/out-for-delivery/
+// delivered) now have a WhatsApp counterpart — cancelled is the only one
+// that doesn't (see utils/orderCancellation.js, untouched, always email).
+// Which Meta-approved template NAME each WhatsApp send actually uses is
+// itself admin-configurable (Settings > Integrations > WhatsApp) — see
+// utils/whatsapp.js getTemplateName(); this dispatcher only decides EMAIL
+// vs WHATSAPP, not which template.
 async function getNotificationChannel(orderId) {
   const order = await Order.findByPk(orderId, { attributes: ["notificationChannel"] });
   // Orders created before this field existed (or any edge case where the
@@ -49,9 +44,14 @@ async function notifyOrderDispatched(orderId) {
   return channel === "whatsapp" ? sendOrderDispatchedWhatsApp(orderId) : sendOrderPackedEmail(orderId);
 }
 
+async function notifyOrderOutForDelivery(orderId) {
+  const channel = await getNotificationChannel(orderId);
+  return channel === "whatsapp" ? sendOrderOutForDeliveryWhatsApp(orderId) : sendOrderOutForDeliveryEmail(orderId);
+}
+
 async function notifyOrderDelivered(orderId) {
   const channel = await getNotificationChannel(orderId);
   return channel === "whatsapp" ? sendOrderDeliveredWhatsApp(orderId) : sendOrderDeliveredEmail(orderId);
 }
 
-module.exports = { notifyOrderConfirmed, notifyOrderDispatched, notifyOrderDelivered };
+module.exports = { notifyOrderConfirmed, notifyOrderDispatched, notifyOrderOutForDelivery, notifyOrderDelivered };

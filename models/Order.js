@@ -219,19 +219,19 @@ const Order = sequelize.define(
     // Same flag-guarded-idempotency purpose as emailsSent above, for the
     // WhatsApp order-status template messages (see utils/whatsapp.js
     // sendOrderConfirmedWhatsApp/sendOrderDispatchedWhatsApp/
-    // sendOrderDeliveredWhatsApp) — a separate JSONB rather than reusing
-    // emailsSent since the two channels can fail/succeed independently (e.g.
-    // WhatsApp template not yet approved) and each needs its own send record.
-    // Only 3 keys, not 5 like emailsSent — no WhatsApp template exists for
-    // outForDelivery/cancelled (see whatsapp_integration_architecture memory
-    // for why: only order_confirmed/order_dispatched/order_delivered were
-    // requested). "dispatched" here fires at the same trigger point as
-    // emailsSent.packed (label generation / pickup-scan webhook) — named
-    // "dispatched" instead of "packed" to match the WhatsApp template's own
-    // name (order_dispatched), not because it's a different event.
+    // sendOrderOutForDeliveryWhatsApp/sendOrderDeliveredWhatsApp) — a
+    // separate JSONB rather than reusing emailsSent since the two channels
+    // can fail/succeed independently (e.g. WhatsApp template not yet
+    // approved) and each needs its own send record. 4 keys, not 5 like
+    // emailsSent — still no WhatsApp template for "cancelled" (see
+    // whatsapp_integration_architecture memory). "dispatched" here fires at
+    // the same trigger point as emailsSent.packed (label generation /
+    // pickup-scan webhook) — named "dispatched" instead of "packed" to
+    // match the WhatsApp template's own name (order_dispatched), not
+    // because it's a different event.
     whatsappSent: {
       type: DataTypes.JSONB,
-      defaultValue: { confirmed: false, dispatched: false, delivered: false },
+      defaultValue: { confirmed: false, dispatched: false, outForDelivery: false, delivered: false },
     },
 
     // Snapshotted once at creation time from WebSettings' notificationChannel

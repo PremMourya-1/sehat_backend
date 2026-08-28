@@ -8,37 +8,61 @@ const { decrypt } = require("./encryption");
 // which already handles the generic get/update).
 //
 // Shape stored in IntegrationSettings.config:
-//   { accessToken(encrypted), phoneNumberId, businessAccountId, webhookVerifyToken(encrypted) }
+//   { accessToken(encrypted), phoneNumberId, businessAccountId,
+//     webhookVerifyToken(encrypted),
+//     templates: { orderConfirmed, orderDispatched, orderOutForDelivery,
+//                   orderDelivered } }
+// `templates` holds the ACTIVE Meta-approved template name per event —
+// plain text (not a secret), admin-editable from Settings > Integrations >
+// WhatsApp so switching to a different already-approved template variant
+// (e.g. after a resubmission, or to A/B two approved variants) is a
+// Settings-page edit, never a deploy. See getTemplateName() below.
 //
 // Below: sendTemplateMessage (the one Graph API call every message goes
 // through — same shared-entry-point role as utils/email.js's sendEmail),
 // order-status wrappers (sendOrderConfirmedWhatsApp/
-// sendOrderDispatchedWhatsApp/sendOrderDeliveredWhatsApp — see
-// whatsappSent on models/Order.js for the send-once guard, and the trigger
-// points alongside utils/email.js's equivalents in controllers/
-// orderController.js, checkoutController.js, webhookController.js, and
-// utils/shiprocket.js), and sendOtpWhatsApp (used by utils/otpProviders/
-// whatsapp.js as the "whatsapp" OTP_PROVIDER option).
+// sendOrderDispatchedWhatsApp/sendOrderOutForDeliveryWhatsApp/
+// sendOrderDeliveredWhatsApp — see whatsappSent on models/Order.js for the
+// send-once guard, and the trigger points alongside utils/email.js's
+// equivalents in controllers/orderController.js, checkoutController.js,
+// webhookController.js, and utils/shiprocket.js), and sendOtpWhatsApp (used
+// by utils/otpProviders/whatsapp.js as the "whatsapp" OTP_PROVIDER option).
 const INTEGRATION_KEY = "whatsapp";
 const GRAPH_API_VERSION = "v21.0";
 
-// Template names as approved in Meta WhatsApp Manager (Business Settings >
-// Message Templates) — see memory/whatsapp_integration_architecture.md for
-// the exact drafts submitted and their approval status. If Meta requires a
-// different name/wording during review, update these constants (and the
-// component shapes below, if the approved structure differs) rather than
-// the callers.
-const TEMPLATES = {
-  orderConfirmed: "order_confirmed",
-  orderDispatched: "order_dispatched",
+// Default/fallback template names for the 4 order-status events — used only
+// when the admin hasn't (yet) overridden a name in Settings > Integrations >
+// WhatsApp (see getTemplateName() below, and IntegrationSettings.config.
+// templates). Admin-configurable specifically so that if Meta ever requires
+// a resubmission under a new name (as already happened once here — hence
+// "_v2"), or multiple approved variants exist for the same event, switching
+// which one is active is a Settings-page edit, not a deploy. Keep these in
+// sync with WhatsAppSettings.jsx's own copy of the same defaults (used there
+// purely for pre-filling the form before anything's been explicitly saved).
+const DEFAULT_TEMPLATE_NAMES = {
+  orderConfirmed: "order_confirmed_v2",
+  orderDispatched: "order_dispatched_v2",
+  orderOutForDelivery: "order_out_for_delivery_v2",
   orderDelivered: "order_delivered",
-  // Meta's built-in Authentication category — whatever name is actually
-  // approved for it (Authentication templates are created/named separately
-  // from Utility ones in WhatsApp Manager, commonly "otp" or
-  // "verification_code"). Update once known.
+};
+
+// Not admin-configurable (unlike DEFAULT_TEMPLATE_NAMES above) — Meta's
+// Authentication category templates are managed separately in WhatsApp
+// Manager from the Utility ones, and this task didn't ask for OTP's
+// template name to be exposed on the Settings page.
+const TEMPLATES = {
   otp: "otp_verification",
 };
 const TEMPLATE_LANGUAGE = "en_US";
+
+// Reads the active template name for one of the 4 order-status events —
+// config.templates.<event> if the admin has set one, else
+// DEFAULT_TEMPLATE_NAMES[event]. Never throws (an unset/malformed config
+// just falls back), matching the task's "avoid a hard crash" requirement.
+async function getTemplateName(event) {
+  const config = await getConfig();
+  return config.templates?.[event] || DEFAULT_TEMPLATE_NAMES[event];
+}
 
 // The exact drafts to submit for Meta review (WhatsApp Manager > Account
 // Tools > Message Templates, or via submitAllTemplates()/scripts/
@@ -48,7 +72,7 @@ const TEMPLATE_LANGUAGE = "en_US";
 // submission/approval status.
 const TEMPLATE_DRAFTS = [
   {
-    name: TEMPLATES.orderConfirmed,
+    name: DEFAULT_TEMPLATE_NAMES.orderConfirmed,
     category: "UTILITY",
     components: [
       {
@@ -59,7 +83,7 @@ const TEMPLATE_DRAFTS = [
     ],
   },
   {
-    name: TEMPLATES.orderDispatched,
+    name: DEFAULT_TEMPLATE_NAMES.orderDispatched,
     category: "UTILITY",
     components: [
       {
@@ -72,7 +96,18 @@ const TEMPLATE_DRAFTS = [
     ],
   },
   {
-    name: TEMPLATES.orderDelivered,
+    name: DEFAULT_TEMPLATE_NAMES.orderOutForDelivery,
+    category: "UTILITY",
+    components: [
+      {
+        type: "BODY",
+        text: "Hi {{1}}, your order #{{2}} is out for delivery and should reach you today! 📦",
+        example: { body_text: [["Priya", "ORD-1234567890"]] },
+      },
+    ],
+  },
+  {
+    name: DEFAULT_TEMPLATE_NAMES.orderDelivered,
     category: "UTILITY",
     components: [
       {
@@ -195,7 +230,10 @@ const orderIncludesForWhatsapp = [{ model: Customer, attributes: ["id", "name"] 
 // whatsappSent.confirmed itself so a duplicate trigger never double-sends,
 // same contract as sendOrderConfirmedEmail() in utils/email.js. Never
 // throws: every failure is logged and returned as { success, error } so
-// callers can fire this without their own try/catch.
+// callers can fire this without their own try/catch. Which template NAME
+// is used is admin-configurable (see getTemplateName()) — this function's
+// own variable-building below never changes regardless of which approved
+// name is active for the event.
 async function sendOrderConfirmedWhatsApp(orderId) {
   const order = await Order.findByPk(orderId, { include: orderIncludesForWhatsapp });
   if (!order) return { success: false, error: "Order not found" };
@@ -203,7 +241,8 @@ async function sendOrderConfirmedWhatsApp(orderId) {
 
   try {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
-    await sendTemplateMessage(order.shippingPhone, TEMPLATES.orderConfirmed, TEMPLATE_LANGUAGE, [
+    const templateName = await getTemplateName("orderConfirmed");
+    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
       {
         type: "body",
         parameters: [
@@ -214,7 +253,7 @@ async function sendOrderConfirmedWhatsApp(orderId) {
       },
     ]);
     await order.update({ whatsappSent: { ...(order.whatsappSent || {}), confirmed: true } });
-    console.log(`WhatsApp: order-confirmed sent for order ${order.orderNumber}`);
+    console.log(`WhatsApp: order-confirmed sent for order ${order.orderNumber} (template "${templateName}")`);
     return { success: true };
   } catch (err) {
     console.error(`WhatsApp: failed to send order-confirmed message for order ${order.orderNumber}: ${err.message}`);
@@ -226,7 +265,7 @@ async function sendOrderConfirmedWhatsApp(orderId) {
 // trigger point as sendOrderPackedEmail (label generation, or the
 // pickup-scan webhook — see utils/shiprocket.js), once courierName/
 // estimatedDeliveryDate are set on the order. Same never-throws,
-// flag-guarded contract as above.
+// flag-guarded, admin-configurable-template-name contract as above.
 async function sendOrderDispatchedWhatsApp(orderId) {
   const order = await Order.findByPk(orderId, { include: orderIncludesForWhatsapp });
   if (!order) return { success: false, error: "Order not found" };
@@ -235,7 +274,8 @@ async function sendOrderDispatchedWhatsApp(orderId) {
   try {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
     const trackingUrl = `${process.env.STORE_FRONT_URL || "https://sehatpotli.in"}/account/orders/${order.id}`;
-    await sendTemplateMessage(order.shippingPhone, TEMPLATES.orderDispatched, TEMPLATE_LANGUAGE, [
+    const templateName = await getTemplateName("orderDispatched");
+    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
       {
         type: "body",
         parameters: [
@@ -248,7 +288,7 @@ async function sendOrderDispatchedWhatsApp(orderId) {
       },
     ]);
     await order.update({ whatsappSent: { ...(order.whatsappSent || {}), dispatched: true } });
-    console.log(`WhatsApp: order-dispatched sent for order ${order.orderNumber}`);
+    console.log(`WhatsApp: order-dispatched sent for order ${order.orderNumber} (template "${templateName}")`);
     return { success: true };
   } catch (err) {
     console.error(`WhatsApp: failed to send order-dispatched message for order ${order.orderNumber}: ${err.message}`);
@@ -256,9 +296,42 @@ async function sendOrderDispatchedWhatsApp(orderId) {
   }
 }
 
+// Sends the "Out for Delivery" WhatsApp template — fires at the same
+// trigger point as sendOrderOutForDeliveryEmail (Shiprocket status
+// webhook). New as of this task — out-for-delivery previously had no
+// WhatsApp counterpart at all (see utils/notifications.js). Same
+// never-throws, flag-guarded, admin-configurable-template-name contract as
+// the other three senders.
+async function sendOrderOutForDeliveryWhatsApp(orderId) {
+  const order = await Order.findByPk(orderId, { include: orderIncludesForWhatsapp });
+  if (!order) return { success: false, error: "Order not found" };
+  if (order.whatsappSent?.outForDelivery) return { success: true, skipped: true };
+
+  try {
+    if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
+    const templateName = await getTemplateName("orderOutForDelivery");
+    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
+      {
+        type: "body",
+        parameters: [
+          { type: "text", text: order.Customer?.name || order.shippingName || "there" },
+          { type: "text", text: order.orderNumber },
+        ],
+      },
+    ]);
+    await order.update({ whatsappSent: { ...(order.whatsappSent || {}), outForDelivery: true } });
+    console.log(`WhatsApp: out-for-delivery sent for order ${order.orderNumber} (template "${templateName}")`);
+    return { success: true };
+  } catch (err) {
+    console.error(`WhatsApp: failed to send out-for-delivery message for order ${order.orderNumber}: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
 // Sends the "Order Delivered" WhatsApp template — fires at the same
 // trigger point as sendOrderDeliveredEmail (Shiprocket status webhook).
-// Same never-throws, flag-guarded contract as above.
+// Same never-throws, flag-guarded, admin-configurable-template-name
+// contract as above.
 async function sendOrderDeliveredWhatsApp(orderId) {
   const order = await Order.findByPk(orderId, { include: orderIncludesForWhatsapp });
   if (!order) return { success: false, error: "Order not found" };
@@ -266,7 +339,8 @@ async function sendOrderDeliveredWhatsApp(orderId) {
 
   try {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
-    await sendTemplateMessage(order.shippingPhone, TEMPLATES.orderDelivered, TEMPLATE_LANGUAGE, [
+    const templateName = await getTemplateName("orderDelivered");
+    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
       {
         type: "body",
         parameters: [
@@ -276,7 +350,7 @@ async function sendOrderDeliveredWhatsApp(orderId) {
       },
     ]);
     await order.update({ whatsappSent: { ...(order.whatsappSent || {}), delivered: true } });
-    console.log(`WhatsApp: order-delivered sent for order ${order.orderNumber}`);
+    console.log(`WhatsApp: order-delivered sent for order ${order.orderNumber} (template "${templateName}")`);
     return { success: true };
   } catch (err) {
     console.error(`WhatsApp: failed to send order-delivered message for order ${order.orderNumber}: ${err.message}`);
@@ -383,12 +457,15 @@ async function listTemplateStatuses() {
 module.exports = {
   getWebhookVerifyToken,
   getCredentials,
+  getTemplateName,
   sendTemplateMessage,
   sendOrderConfirmedWhatsApp,
   sendOrderDispatchedWhatsApp,
+  sendOrderOutForDeliveryWhatsApp,
   sendOrderDeliveredWhatsApp,
   sendOtpWhatsApp,
   submitAllTemplates,
   listTemplateStatuses,
   TEMPLATE_DRAFTS,
+  DEFAULT_TEMPLATE_NAMES,
 };
