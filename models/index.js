@@ -30,6 +30,7 @@ const Expense = require("./Expense");
 const Sale = require("./Sale");
 const CartRewardTier = require("./CartRewardTier");
 const PriceUpdateLog = require("./PriceUpdateLog");
+const AbandonedCheckout = require("./AbandonedCheckout");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -130,6 +131,14 @@ Notification.belongsTo(Order, { foreignKey: "orderId" });
 Admin.hasMany(PriceUpdateLog, { foreignKey: "adminId" });
 PriceUpdateLog.belongsTo(Admin, { foreignKey: "adminId" });
 
+// Customer <-> AbandonedCheckout (prepaid checkout attempts before payment
+// succeeds — see utils/convertAbandonedCheckout.js). No onDelete cascade
+// tied to Customer here on purpose — same reasoning as Order/Customer:
+// this is a real historical record (remarketing value), not something that
+// should vanish if the account is ever removed.
+Customer.hasMany(AbandonedCheckout, { foreignKey: "customerId" });
+AbandonedCheckout.belongsTo(Customer, { foreignKey: "customerId" });
+
 // Order <-> ShiprocketWebhookLog (raw webhook audit trail — orderId is
 // nullable so an unmatched webhook still gets logged, hence no onDelete
 // cascade here: a log row should outlive the order it referenced).
@@ -169,4 +178,5 @@ module.exports = {
   Sale,
   CartRewardTier,
   PriceUpdateLog,
+  AbandonedCheckout,
 };

@@ -105,6 +105,7 @@ const {
   deleteCartRewardTier,
 } = require("../controllers/adminCartRewardController");
 const { cleanupAbandonedCarts } = require("../controllers/adminCartController");
+const { getAllAbandonedCheckouts } = require("../controllers/adminAbandonedCheckoutController");
 
 // --- Auth (login is the only unauthenticated admin route) ---
 router.post("/login", adminLogin);
@@ -245,5 +246,9 @@ router.delete("/cart-rewards/:id", deleteCartRewardTier);
 
 // --- Cart housekeeping (abandoned Cart/CartItem cleanup — see adminCartController.js) ---
 router.post("/carts/cleanup-abandoned", cleanupAbandonedCarts);
+
+// --- Abandoned Checkouts (prepaid checkout attempts before payment succeeds — see
+// models/AbandonedCheckout.js). Read-only for now, deliberately separate from Orders. ---
+router.get("/abandoned-checkouts", getAllAbandonedCheckouts);
 
 module.exports = router;

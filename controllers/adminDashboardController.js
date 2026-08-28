@@ -1,7 +1,17 @@
+const { Op } = require("sequelize");
 const { Product, Category, Order, Customer } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { getWalletBalance } = require("../utils/shiprocket");
+
+// Same revenue-eligibility rule as controllers/adminAnalyticsController.js's
+// own REVENUE_ELIGIBLE — cancelled orders never realized any revenue even
+// though their `total` column still holds a real number, and
+// payment_pending/payment_failed are legacy customerStatus values from a
+// since-replaced prepaid-checkout design that never realized revenue
+// either (see models/Order.js). `totalOrders` intentionally stays an
+// unfiltered count — that describes order volume, not money earned.
+const REVENUE_ELIGIBLE = { customerStatus: { [Op.notIn]: ["cancelled", "payment_pending", "payment_failed"] } };
 
 // GET /api/admin/dashboard
 exports.getDashboardStats = asyncHandler(async (req, res) => {
@@ -10,7 +20,7 @@ exports.getDashboardStats = asyncHandler(async (req, res) => {
     Category.count(),
     Order.count(),
     Customer.count(),
-    Order.findAll({ attributes: ["total"] }),
+    Order.findAll({ where: REVENUE_ELIGIBLE, attributes: ["total"] }),
   ]);
 
   const totalRevenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);

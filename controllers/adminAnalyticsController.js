@@ -14,15 +14,20 @@ const {
 // and AOV always exclude "cancelled" orders (a cancelled order never
 // realized any revenue, even though its `total` column still holds a real
 // number) — same reasoning the best-sellers endpoint already needs to
-// apply explicitly. Plain order *counts* (top-line "Orders" stat, status
+// apply explicitly. Also excludes "payment_pending"/"payment_failed" —
+// legacy customerStatus values from a since-replaced prepaid-checkout
+// design (see models/Order.js's own comment) that no new order can reach,
+// but a historical row could still carry if one was ever kept rather than
+// deleted (see the AbandonedCheckout redesign) — never realized revenue
+// either way. Plain order *counts* (top-line "Orders" stat, status
 // breakdown, top locations, new-vs-returning) intentionally include every
 // status, cancelled included, since those describe order *volume/activity*
 // rather than money earned.
-const NOT_CANCELLED = { customerStatus: { [Op.ne]: "cancelled" } };
+const REVENUE_ELIGIBLE = { customerStatus: { [Op.notIn]: ["cancelled", "payment_pending", "payment_failed"] } };
 
 async function revenueAndCount(where) {
   const row = await Order.findOne({
-    where: { ...where, ...NOT_CANCELLED },
+    where: { ...where, ...REVENUE_ELIGIBLE },
     attributes: [
       [fn("COALESCE", fn("SUM", col("total")), 0), "revenue"],
       [fn("COUNT", col("id")), "orderCount"],
@@ -90,7 +95,7 @@ exports.getTrends = asyncHandler(async (req, res) => {
 
   const [revenueRows, countRows] = await Promise.all([
     Order.findAll({
-      where: { createdAt: { [Op.gte]: since }, ...NOT_CANCELLED },
+      where: { createdAt: { [Op.gte]: since }, ...REVENUE_ELIGIBLE },
       attributes: [
         [dayBucket, "date"],
         [fn("SUM", col("total")), "revenue"],
@@ -155,7 +160,7 @@ exports.getBreakdown = asyncHandler(async (req, res) => {
       raw: true,
     }),
     Order.findAll({
-      where: { createdAt, ...NOT_CANCELLED },
+      where: { createdAt, ...REVENUE_ELIGIBLE },
       attributes: [
         "paymentMethod",
         [fn("COUNT", col("id")), "count"],
@@ -227,7 +232,7 @@ exports.getBestSellers = asyncHandler(async (req, res) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
 
   const now = new Date();
-  const orderWhere = { ...NOT_CANCELLED };
+  const orderWhere = { ...REVENUE_ELIGIBLE };
   if (period === "today") orderWhere.createdAt = { [Op.gte]: startOfTodayIST(now) };
   else if (period === "week") orderWhere.createdAt = { [Op.gte]: startOfWeekIST(now) };
   else if (period === "month") orderWhere.createdAt = { [Op.gte]: startOfMonthIST(now) };

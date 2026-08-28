@@ -1,4 +1,4 @@
-const { sequelize, Order, OrderItem, Product, ProductVariant, Cart, CartItem, ComboOffer, CartRewardTier, ProductReview } = require("../models");
+const { sequelize, Order, OrderItem, Product, ProductVariant, ComboOffer, CartRewardTier, ProductReview, AbandonedCheckout } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const calculateSubtotal = require("../utils/calculateSubtotal");
@@ -12,11 +12,16 @@ const { emitNewOrder } = require("../utils/socket");
 const { sendOrderConfirmedEmail } = require("../utils/email");
 const { getShippingCharge } = require("../utils/shippingZones");
 const { finalizeCancellation } = require("../utils/orderCancellation");
+const { createOrderRecord } = require("../utils/orderCreation");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
 const MIN_ORDER_WEIGHT_KG = 0.1;
 const PAYMENT_METHODS = ["cod", "prepaid"];
 
+// Exported (not just used locally) — controllers/checkoutController.js's
+// verifyPayment needs this exact same shape for the Order it returns right
+// after a successful payment converts an AbandonedCheckout, so the
+// frontend gets identical data whichever endpoint it came from.
 const orderItemIncludes = [
   {
     model: OrderItem,
@@ -27,6 +32,7 @@ const orderItemIncludes = [
     ],
   },
 ];
+exports.orderItemIncludes = orderItemIncludes;
 
 const MOBILE_REGEX = /^[0-9]{10}$/;
 
@@ -154,126 +160,98 @@ exports.createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  // Everything below is one transaction — including the Razorpay order
-  // creation for prepaid — so a failure anywhere (a network blip calling
-  // Razorpay included) rolls back cleanly with no ghost order, no
-  // decremented stock, nothing for a retry to collide with.
-  let orderId;
-  let razorpayInit = null;
-  try {
-    await sequelize.transaction(async (t) => {
-      // Prepaid orders start at "payment_pending", not "confirmed" — there's
-      // a real payment step still to come, and the customer/admin shouldn't
-      // see "Order Confirmed" for something that might never actually be
-      // paid for. COD has no such uncertainty (no payment step to wait on),
-      // so it keeps going straight to "confirmed" via the model's default.
-      // See models/Order.js for the full lifecycle note.
-      const order = await Order.create(
-        {
-          orderNumber: generateOrderNumber(),
+  const shippingDetails = {
+    shippingName,
+    shippingPhone,
+    alternateMobile: alternateMobile || null,
+    shippingAddress,
+    shippingCity: location.city,
+    shippingState: location.state,
+    shippingPincode,
+  };
+  const resolvedCouponCode = appliedCoupon ? appliedCoupon.code : null;
+
+  // COD: a real Order, right now — no payment step to wait on, so nothing
+  // about this branch changed from before.
+  if (paymentMethod === "cod") {
+    let orderId;
+    try {
+      await sequelize.transaction(async (t) => {
+        const order = await createOrderRecord({
+          transaction: t,
           customerId: req.customer.id,
+          lineItems,
           subtotal,
           discountAmount,
           shippingCharge,
-          couponCode: appliedCoupon ? appliedCoupon.code : null,
           total,
-          paymentMethod,
-          shippingName,
-          shippingPhone,
-          alternateMobile: alternateMobile || null,
-          shippingAddress,
-          shippingCity: location.city,
-          shippingState: location.state,
-          shippingPincode,
-          ...(paymentMethod === "prepaid"
-            ? { customerStatus: "payment_pending", statusHistory: { payment_pending: new Date() } }
-            : { statusHistory: { confirmed: new Date() } }),
-        },
-        { transaction: t },
-      );
-      orderId = order.id;
-
-      for (const line of lineItems) {
-        await OrderItem.create(
-          {
-            orderId: order.id,
-            productId: line.productId,
-            variantId: line.variantId,
-            comboOfferId: line.comboOfferId || null,
-            customMixId: line.customMixId || null,
-            customMixName: line.customMixName || null,
-            rewardTierId: line.rewardTierId || null,
-            isFreeGift: line.isFreeGift || false,
-            weight: line.weight,
-            price: line.price,
-            quantity: line.quantity,
-          },
-          { transaction: t },
-        );
-
-        // See the stock pre-check above — mix ingredient grams don't
-        // decrement the pack-based stock counter.
-        if (line.isMixLine) continue;
-
-        // Prepaid: stock is deliberately NOT decremented here — an order
-        // that never gets paid for (payment window closed, tab lost, card
-        // declined) must never hold stock hostage. It's decremented once,
-        // atomically, only when payment actually succeeds — see
-        // utils/markOrderPaid.js. COD has no such uncertainty, so it still
-        // decrements immediately, same as always.
-        if (paymentMethod === "prepaid") continue;
-
-        await ProductVariant.decrement("stock", {
-          by: line.quantity,
-          where: { id: line.variantId },
-          transaction: t,
+          couponCode: resolvedCouponCode,
+          paymentMethod: "cod",
+          ...shippingDetails,
+          statusHistory: { confirmed: new Date() },
         });
-      }
+        orderId = order.id;
+      });
+    } catch (err) {
+      console.error(`Order creation failed: ${err.message}`);
+      return sendError(res, "Could not place order — please try again", 400);
+    }
 
-      if (appliedCoupon) {
-        await appliedCoupon.increment("usedCount", { transaction: t });
-      }
-
-      // Clear the customer's persisted server-side cart, if one exists.
-      const cart = await Cart.findOne({ where: { customerId: req.customer.id }, transaction: t });
-      if (cart) await CartItem.destroy({ where: { cartId: cart.id }, transaction: t });
-
-      if (paymentMethod === "prepaid") {
-        const { keyId } = await getRazorpayCredentials();
-        const razorpayOrder = await createRazorpayOrder({
-          amount: total,
-          receipt: order.orderNumber,
-          notes: { orderId: order.id },
-        });
-        order.razorpayOrderId = razorpayOrder.id;
-        await order.save({ transaction: t });
-        razorpayInit = { razorpayOrderId: razorpayOrder.id, razorpayKeyId: keyId, amount: razorpayOrder.amount };
-      }
-    });
-  } catch (err) {
-    console.error(`Order creation failed: ${err.message}`);
-    return sendError(
-      res,
-      paymentMethod === "prepaid"
-        ? "Could not initiate online payment — please try again or choose Cash on Delivery"
-        : "Could not place order — please try again",
-      400,
-    );
-  }
-
-  const fullOrder = await Order.findByPk(orderId, { include: orderItemIncludes });
-
-  // COD orders are confirmed the moment they're placed — no separate payment
-  // step — so this is where the admin gets notified. Prepaid orders notify
-  // later, only once payment is actually verified (see checkoutController).
-  if (paymentMethod === "cod") {
+    const fullOrder = await Order.findByPk(orderId, { include: orderItemIncludes });
     emitNewOrder(fullOrder).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
     sendOrderConfirmedEmail(fullOrder.id).catch((err) =>
       console.error(`Email: order-confirmed send threw unexpectedly for order ${fullOrder.orderNumber}: ${err.message}`),
     );
+    return sendSuccess(res, { ...fullOrder.toJSON(), razorpay: null }, "Order placed successfully", 201);
   }
 
-  return sendSuccess(res, { ...fullOrder.toJSON(), razorpay: razorpayInit }, "Order placed successfully", 201);
+  // Prepaid: NO Order is created here — only an AbandonedCheckout, holding
+  // everything needed to build the real Order later (see
+  // utils/convertAbandonedCheckout.js). This is the whole point of this
+  // flow: a checkout the customer never actually pays for (closed the
+  // Razorpay popup, tab crash, card declined) must never become a real
+  // Order counted in the Orders list or dashboard revenue — stock is
+  // never touched either, for the same reason. Nothing here needs a
+  // transaction — it's a single insert, not the multi-row write COD's
+  // branch above is.
+  let abandonedCheckoutId;
+  let checkoutReference;
+  let razorpayInit;
+  try {
+    const { keyId } = await getRazorpayCredentials();
+    // Not a real Order yet, so there's no real orderNumber — this is just a
+    // display-only reference for Razorpay's payment sheet and the
+    // frontend's pre-payment UI (retry banner, etc). Once payment succeeds,
+    // the real Order gets its own real orderNumber (see
+    // utils/convertAbandonedCheckout.js), independent of this string.
+    checkoutReference = generateOrderNumber();
+    const razorpayOrder = await createRazorpayOrder({
+      amount: total,
+      receipt: checkoutReference,
+      notes: { customerId: req.customer.id },
+    });
+
+    const checkout = await AbandonedCheckout.create({
+      customerId: req.customer.id,
+      cartItemsSnapshot: lineItems,
+      shippingDetails,
+      subtotal,
+      discountAmount,
+      shippingCharge,
+      totalAmount: total,
+      couponCode: resolvedCouponCode,
+      razorpayOrderId: razorpayOrder.id,
+      status: "pending",
+    });
+
+    abandonedCheckoutId = checkout.id;
+    razorpayInit = { razorpayOrderId: razorpayOrder.id, razorpayKeyId: keyId, amount: razorpayOrder.amount };
+  } catch (err) {
+    console.error(`Checkout initiation failed: ${err.message}`);
+    return sendError(res, "Could not initiate online payment — please try again or choose Cash on Delivery", 400);
+  }
+
+  return sendSuccess(res, { abandonedCheckoutId, checkoutReference, razorpay: razorpayInit }, "Payment initiated", 201);
 });
 
 // GET /api/orders?page=&limit=

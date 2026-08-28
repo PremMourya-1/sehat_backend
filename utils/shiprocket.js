@@ -1078,8 +1078,8 @@ function isForwardProgress(currentCustomerStatus, nextCustomerStatus) {
 // fires whichever Step B email that transition corresponds to. Idempotent —
 // a duplicate/retried event (same status, or one already superseded) is a
 // no-op, same "already applied is still success" contract as
-// utils/markOrderPaid.js. Never throws — same { success, error } contract
-// as every step above.
+// utils/convertAbandonedCheckout.js. Never throws — same { success, error }
+// contract as every step above.
 async function processStatusUpdate(orderId, rawStatus) {
   const order = await Order.findByPk(orderId);
   if (!order) {

@@ -17,7 +17,7 @@ if (process.env.DB_MODE === "live") {
 const { sequelize, connectDB } = require("./config/db");
 require("./models");
 const { initSocket } = require("./utils/socket");
-const { startAbandonedOrderCleanupJob } = require("./utils/abandonedOrderCleanup");
+const { startAbandonedCheckoutCleanupJob } = require("./utils/abandonedCheckoutCleanup");
 
 const authRoutes = require("./routes/authRoutes");
 const authAdapterRoutes = require("./routes/authAdapterRoutes");
@@ -338,10 +338,10 @@ const startServer = async () => {
       console.log("Database synced");
       await seedCmsPages();
       await seedStarterContent();
-      // Writes (marks abandoned prepaid orders "payment_failed") — same
-      // reasoning as sync/seed above, never run against production from a
-      // local DB_MODE=live session.
-      startAbandonedOrderCleanupJob();
+      // Writes (marks abandoned checkouts "expired") — same reasoning as
+      // sync/seed above, never run against production from a local
+      // DB_MODE=live session.
+      startAbandonedCheckoutCleanupJob();
     }
 
     const PORT = process.env.PORT || 4000;

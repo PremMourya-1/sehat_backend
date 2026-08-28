@@ -7,7 +7,8 @@ const { getShippingCharge } = require("../utils/shippingZones");
 const calculateSubtotal = require("../utils/calculateSubtotal");
 const { getCodAvailability } = require("../utils/checkCodAvailability");
 const { getRazorpayCredentials, verifyPaymentSignature } = require("../utils/razorpay");
-const { markOrderPaid } = require("../utils/markOrderPaid");
+const { convertAbandonedCheckout } = require("../utils/convertAbandonedCheckout");
+const { orderItemIncludes } = require("./orderController");
 const { emitNewOrder } = require("../utils/socket");
 const { sendOrderConfirmedEmail } = require("../utils/email");
 const { getSiteSettings } = require("../utils/webSettings");
@@ -66,9 +67,11 @@ exports.checkCodAvailability = asyncHandler(async (req, res) => {
 });
 
 // POST /api/checkout/verify-payment  { razorpay_order_id, razorpay_payment_id, razorpay_signature }
-// Requires customerAuth (see routes/checkoutRoutes.js) — scopes the lookup
-// to the calling customer's own order. Called by the frontend right after
-// Razorpay's checkout.js `handler` callback fires with these three fields.
+// Requires customerAuth (see routes/checkoutRoutes.js). Called by the
+// frontend right after Razorpay's checkout.js `handler` callback fires
+// with these three fields. No Order exists yet at this point for a prepaid
+// checkout — this is the moment one gets created (see
+// utils/convertAbandonedCheckout.js), not an update to an existing row.
 exports.verifyPayment = asyncHandler(async (req, res) => {
   const { razorpay_order_id: razorpayOrderId, razorpay_payment_id: razorpayPaymentId, razorpay_signature: razorpaySignature } =
     req.body;
@@ -77,36 +80,38 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     return sendError(res, "Missing payment verification fields", 400);
   }
 
-  const order = await Order.findOne({ where: { razorpayOrderId, customerId: req.customer.id } });
-  if (!order) {
-    return sendError(res, "Order not found for this payment", 404);
-  }
-
-  if (order.paymentStatus === "paid") {
-    return sendSuccess(res, order, "Payment already verified");
-  }
-
   const { keySecret } = await getRazorpayCredentials();
   const isValid = verifyPaymentSignature({ razorpayOrderId, razorpayPaymentId, razorpaySignature, keySecret });
 
   if (!isValid) {
     console.error(
-      `Razorpay: signature mismatch verifying payment for order ${order.orderNumber} (razorpay order ${razorpayOrderId}, payment ${razorpayPaymentId})`,
+      `Razorpay: signature mismatch verifying payment for razorpay order ${razorpayOrderId} (payment ${razorpayPaymentId})`,
     );
     return sendError(res, "Payment verification failed", 400);
   }
 
-  const { alreadyPaid } = await markOrderPaid(order.id, razorpayPaymentId);
-  await order.reload();
+  const result = await convertAbandonedCheckout(razorpayOrderId, razorpayPaymentId, { customerId: req.customer.id });
+
+  if (!result.success) {
+    if (result.reason === "stock_unavailable") {
+      return sendError(
+        res,
+        "Your payment succeeded, but one or more items in your order are no longer available. Your payment is being refunded automatically — please contact support if you don't see the refund within a few days.",
+        409,
+      );
+    }
+    return sendError(res, "Checkout not found for this payment", 404);
+  }
 
   // Only notify the admin once, for whichever path (frontend callback here,
-  // or the webhook fallback) actually flips the order to paid first.
-  if (!alreadyPaid) {
-    emitNewOrder(order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
-    sendOrderConfirmedEmail(order.id).catch((err) =>
-      console.error(`Email: order-confirmed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+  // or the webhook fallback) actually converts the checkout first.
+  if (!result.alreadyConverted) {
+    emitNewOrder(result.order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+    sendOrderConfirmedEmail(result.order.id).catch((err) =>
+      console.error(`Email: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
     );
   }
 
-  return sendSuccess(res, order, "Payment verified successfully");
+  const fullOrder = await Order.findByPk(result.order.id, { include: orderItemIncludes });
+  return sendSuccess(res, fullOrder, "Payment verified successfully");
 });

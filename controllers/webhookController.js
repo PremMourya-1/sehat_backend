@@ -1,9 +1,9 @@
-const { Order, ShiprocketWebhookLog } = require("../models");
+const { ShiprocketWebhookLog } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { getRazorpayWebhookSecret, verifyWebhookSignature } = require("../utils/razorpay");
 const { getWebhookSecret: getShiprocketWebhookSecret, handleShiprocketStatusWebhook } = require("../utils/shiprocket");
-const { markOrderPaid } = require("../utils/markOrderPaid");
+const { convertAbandonedCheckout } = require("../utils/convertAbandonedCheckout");
 const { emitNewOrder } = require("../utils/socket");
 const { sendOrderConfirmedEmail } = require("../utils/email");
 
@@ -40,22 +40,28 @@ exports.razorpayWebhook = asyncHandler(async (req, res) => {
     const razorpayOrderId = payment?.order_id;
     const razorpayPaymentId = payment?.id;
 
-    const order = razorpayOrderId ? await Order.findOne({ where: { razorpayOrderId } }) : null;
-    if (order) {
-      const result = await markOrderPaid(order.id, razorpayPaymentId);
-      console.log(
-        result.alreadyPaid
-          ? `Razorpay webhook: order ${order.orderNumber} was already paid (likely confirmed via the frontend callback first)`
-          : `Razorpay webhook: order ${order.orderNumber} marked paid via webhook fallback`,
-      );
-      if (!result.alreadyPaid) {
-        emitNewOrder(order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
-        sendOrderConfirmedEmail(order.id).catch((err) =>
-          console.error(`Email: order-confirmed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    if (razorpayOrderId) {
+      // No customerId guard here — a valid webhook signature (checked
+      // above) is itself the authentication for this path, there's no
+      // logged-in customer to scope it to.
+      const result = await convertAbandonedCheckout(razorpayOrderId, razorpayPaymentId);
+      if (result.success) {
+        console.log(
+          result.alreadyConverted
+            ? `Razorpay webhook: order ${result.order.orderNumber} was already converted (likely confirmed via the frontend callback first)`
+            : `Razorpay webhook: order ${result.order.orderNumber} created via webhook fallback`,
         );
+        if (!result.alreadyConverted) {
+          emitNewOrder(result.order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
+          sendOrderConfirmedEmail(result.order.id).catch((err) =>
+            console.error(`Email: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
+          );
+        }
+      } else {
+        console.error(`Razorpay webhook: conversion failed for razorpay order ${razorpayOrderId} — ${result.reason}`);
       }
     } else {
-      console.error(`Razorpay webhook: payment.captured for unknown razorpay order ${razorpayOrderId}`);
+      console.error("Razorpay webhook: payment.captured event missing order_id");
     }
   }
 
