@@ -53,8 +53,27 @@ const Order = sequelize.define(
     // "cancelled" is a terminal branch like "rto" — see
     // utils/orderCancellation.js and isForwardProgress() in
     // utils/shiprocket.js, which blocks any further status change once set.
+    //
+    // "payment_pending" / "payment_failed" only ever apply to prepaid
+    // orders, and sit BEFORE "confirmed" rather than branching off it — a
+    // prepaid order is created at "payment_pending" (not "confirmed"; see
+    // controllers/orderController.js createOrder) and only moves to
+    // "confirmed" once utils/markOrderPaid.js actually sees the payment
+    // succeed. "payment_failed" is the terminal state a "payment_pending"
+    // order falls into if it's never completed — set automatically by
+    // utils/abandonedOrderCleanup.js's housekeeping job after 24h, or
+    // immediately if Razorpay's own webhook reports a failed payment. COD
+    // orders never pass through either value — there's no payment step to
+    // wait for, so they go straight to "confirmed" at creation, same as
+    // always. Deliberately NOT routed through "cancelled": that triggers
+    // utils/orderCancellation.js's restock/refund logic, which doesn't
+    // apply here — a payment_pending order was never stocked out (stock
+    // only decrements once payment succeeds, see markOrderPaid.js) and
+    // never charged.
     customerStatus: {
       type: DataTypes.ENUM(
+        "payment_pending",
+        "payment_failed",
         "confirmed",
         "dispatched",
         "picked_up",

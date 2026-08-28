@@ -162,6 +162,12 @@ exports.createOrder = asyncHandler(async (req, res) => {
   let razorpayInit = null;
   try {
     await sequelize.transaction(async (t) => {
+      // Prepaid orders start at "payment_pending", not "confirmed" — there's
+      // a real payment step still to come, and the customer/admin shouldn't
+      // see "Order Confirmed" for something that might never actually be
+      // paid for. COD has no such uncertainty (no payment step to wait on),
+      // so it keeps going straight to "confirmed" via the model's default.
+      // See models/Order.js for the full lifecycle note.
       const order = await Order.create(
         {
           orderNumber: generateOrderNumber(),
@@ -179,7 +185,9 @@ exports.createOrder = asyncHandler(async (req, res) => {
           shippingCity: location.city,
           shippingState: location.state,
           shippingPincode,
-          statusHistory: { confirmed: new Date() },
+          ...(paymentMethod === "prepaid"
+            ? { customerStatus: "payment_pending", statusHistory: { payment_pending: new Date() } }
+            : { statusHistory: { confirmed: new Date() } }),
         },
         { transaction: t },
       );
@@ -206,6 +214,14 @@ exports.createOrder = asyncHandler(async (req, res) => {
         // See the stock pre-check above — mix ingredient grams don't
         // decrement the pack-based stock counter.
         if (line.isMixLine) continue;
+
+        // Prepaid: stock is deliberately NOT decremented here — an order
+        // that never gets paid for (payment window closed, tab lost, card
+        // declined) must never hold stock hostage. It's decremented once,
+        // atomically, only when payment actually succeeds — see
+        // utils/markOrderPaid.js. COD has no such uncertainty, so it still
+        // decrements immediately, same as always.
+        if (paymentMethod === "prepaid") continue;
 
         await ProductVariant.decrement("stock", {
           by: line.quantity,
@@ -325,7 +341,22 @@ exports.getOrderById = asyncHandler(async (req, res) => {
   }
 
   const trackingUrl = order.awbCode ? `https://shiprocket.co/tracking/${order.awbCode}` : null;
-  return sendSuccess(res, { ...order.toJSON(), trackingUrl, reviewedProductIds });
+
+  // Lets the order detail page reopen Razorpay's checkout for a
+  // "payment_pending" order (see Components — retryOrderPayment on the
+  // frontend) without a separate config endpoint. keyId is Razorpay's own
+  // public identifier (not the secret) — safe to expose to the customer,
+  // same as it already is in the order-creation response.
+  let razorpayKeyId = null;
+  if (order.paymentMethod === "prepaid" && order.customerStatus === "payment_pending") {
+    try {
+      razorpayKeyId = (await getRazorpayCredentials()).keyId;
+    } catch (err) {
+      console.error(`getOrderById: could not resolve Razorpay keyId for retry: ${err.message}`);
+    }
+  }
+
+  return sendSuccess(res, { ...order.toJSON(), trackingUrl, reviewedProductIds, razorpayKeyId });
 });
 
 // POST /api/orders/:id/cancel  { reason? }
