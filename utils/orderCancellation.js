@@ -2,9 +2,13 @@ const { sequelize, Order, OrderItem, ProductVariant } = require("../models");
 const { createRefund } = require("./razorpay");
 const { sendOrderCancelledEmail } = require("./email");
 
-// Reverses the stock decrement createOrder() applied at order-creation time
-// (see controllers/orderController.js) — one increment per line item, same
-// variantId/quantity pairing.
+// Reverses the stock decrement applied when this order's items were
+// actually decremented — COD at order-creation time (see utils/
+// orderCreation.js createOrderRecord), prepaid only once payment succeeds
+// (see utils/convertAbandonedCheckout.js) — one increment per line item,
+// same variantId/quantity pairing. Only called by finalizeCancellation
+// below when shouldRestock is true; see there for why a still-unpaid
+// prepaid order must never reach this (nothing to reverse).
 async function restockOrderItems(orderId, transaction) {
   const items = await OrderItem.findAll({ where: { orderId }, transaction });
   for (const item of items) {
@@ -61,16 +65,33 @@ async function refundIfNeeded(order) {
 //   itself, BEFORE calling this, and only calls this if that step succeeded
 //   (or wasn't needed) — this function has no Shiprocket awareness at all.
 //
-// Restock + status update are one transaction (either both happen or
-// neither does); the refund/email are external calls that run after it
-// commits, same "side effect after the real state change, never blocking
-// it" pattern as order creation's emitNewOrder/sendOrderConfirmedEmail.
+// Restock (conditional — see shouldRestock below) + status update are one
+// transaction (either both happen or neither does); the refund/email are
+// external calls that run after it commits, same "side effect after the
+// real state change, never blocking it" pattern as order creation's
+// emitNewOrder/sendOrderConfirmedEmail.
 // Never throws — the caller's own eligibility checks are the last point
 // where "can this be cancelled" is decided; once this runs, cancellation
 // itself is not allowed to fail out from under the customer/admin.
 async function finalizeCancellation(orderId, { cancelledBy, cancellationReason }) {
+  const orderBefore = await Order.findByPk(orderId);
+
+  // A prepaid order only ever gets its stock decremented once payment
+  // actually succeeds (see utils/orderCreation.js / utils/
+  // convertAbandonedCheckout.js) — one still sitting unpaid (paymentStatus
+  // !== "paid") never had any decremented in the first place, whether it's
+  // a brand-new AbandonedCheckout-era attempt or one of the now-legacy
+  // real Order rows stuck at customerStatus "payment_pending"/
+  // "payment_failed" from before that redesign (2026-08-28 incident —
+  // those predate stock ever being touched too, just via an earlier
+  // design that also deferred the decrement). Restocking one of these
+  // would incorrectly ADD stock nothing ever took. COD has no such
+  // uncertainty — it always decrements immediately at creation, so it
+  // always needs the normal restock.
+  const shouldRestock = orderBefore.paymentMethod !== "prepaid" || orderBefore.paymentStatus === "paid";
+
   await sequelize.transaction(async (t) => {
-    await restockOrderItems(orderId, t);
+    if (shouldRestock) await restockOrderItems(orderId, t);
     await Order.update(
       {
         customerStatus: "cancelled",
