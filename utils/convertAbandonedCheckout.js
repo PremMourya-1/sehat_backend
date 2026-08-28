@@ -1,4 +1,4 @@
-const { sequelize, AbandonedCheckout, Order, ProductVariant } = require("../models");
+const { sequelize, AbandonedCheckout, Order, OrderItem, ProductVariant } = require("../models");
 const { createOrderRecord } = require("./orderCreation");
 const { createRefund } = require("./razorpay");
 
@@ -19,6 +19,12 @@ const { createRefund } = require("./razorpay");
 // the two paths to arrive actually converts it — the second sees the row
 // already gone and, given a matching Order now exists, reports
 // alreadyConverted instead of erroring.
+//
+// Also handles a real one-off transition case (see the "notFound" branch
+// below, 2026-08-28): an Order created by the OLD pre-AbandonedCheckout
+// flow whose payment only completed after this code went live — finishes
+// paying/confirming/decrementing it here instead of assuming any existing
+// Order must already be correctly paid.
 //
 // Returns one of:
 //   { success: true, order, alreadyConverted }
@@ -114,8 +120,41 @@ async function convertAbandonedCheckout(razorpayOrderId, razorpayPaymentId, { cu
     const existing = await Order.findOne({
       where: { razorpayOrderId, ...(customerId ? { customerId } : {}) },
     });
-    if (existing) return { success: true, order: existing, alreadyConverted: true };
-    return { success: false, reason: "not_found" };
+    if (!existing) return { success: false, reason: "not_found" };
+
+    // An Order can exist here without ever having gone through THIS
+    // function if it was created by the pre-AbandonedCheckout flow (a real
+    // Order at checkout time, not an AbandonedCheckout) and its payment
+    // only completed after the backend redeployed to this code — a real
+    // launch-day incident (2026-08-28) that left at least one genuinely
+    // paid customer stuck looking unpaid, because this branch used to
+    // treat "an Order already exists" as always meaning "already
+    // correctly paid", which only held for Orders THIS function itself
+    // created. Only actually finish it here if it isn't paid yet — a
+    // second call for an Order this function DID already convert must
+    // stay a pure no-op.
+    if (existing.paymentStatus === "paid") {
+      return { success: true, order: existing, alreadyConverted: true };
+    }
+
+    await sequelize.transaction(async (t) => {
+      const items = await OrderItem.findAll({ where: { orderId: existing.id }, transaction: t });
+      for (const item of items) {
+        if (item.customMixId) continue;
+        await ProductVariant.decrement("stock", { by: item.quantity, where: { id: item.variantId }, transaction: t });
+      }
+      await existing.update(
+        {
+          paymentStatus: "paid",
+          razorpayPaymentId,
+          customerStatus: "confirmed",
+          statusHistory: { ...(existing.statusHistory || {}), confirmed: new Date() },
+        },
+        { transaction: t },
+      );
+    });
+
+    return { success: true, order: existing, alreadyConverted: false };
   }
 
   return { success: true, order, alreadyConverted: false };
