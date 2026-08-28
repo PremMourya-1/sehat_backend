@@ -6,8 +6,7 @@ const { getWebhookSecret: getShiprocketWebhookSecret, handleShiprocketStatusWebh
 const { getWebhookVerifyToken: getWhatsappWebhookVerifyToken } = require("../utils/whatsapp");
 const { convertAbandonedCheckout } = require("../utils/convertAbandonedCheckout");
 const { emitNewOrder } = require("../utils/socket");
-const { sendOrderConfirmedEmail } = require("../utils/email");
-const { sendOrderConfirmedWhatsApp } = require("../utils/whatsapp");
+const { notifyOrderConfirmed } = require("../utils/notifications");
 
 // POST /api/webhooks/razorpay — fallback for when the frontend's
 // verify-payment callback never fires (browser closed mid-payment, network
@@ -55,11 +54,8 @@ exports.razorpayWebhook = asyncHandler(async (req, res) => {
         );
         if (!result.alreadyConverted) {
           emitNewOrder(result.order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
-          sendOrderConfirmedEmail(result.order.id).catch((err) =>
-            console.error(`Email: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
-          );
-          sendOrderConfirmedWhatsApp(result.order.id).catch((err) =>
-            console.error(`WhatsApp: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
+          notifyOrderConfirmed(result.order.id).catch((err) =>
+            console.error(`Notification: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
           );
         }
       } else {

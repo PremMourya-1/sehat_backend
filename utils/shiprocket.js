@@ -7,8 +7,8 @@ const {
 } = require("../models");
 const { encrypt, decrypt } = require("./encryption");
 const { retryAsync } = require("./retry");
-const { sendOrderPackedEmail, sendOrderOutForDeliveryEmail, sendOrderDeliveredEmail } = require("./email");
-const { sendOrderDispatchedWhatsApp, sendOrderDeliveredWhatsApp } = require("./whatsapp");
+const { sendOrderOutForDeliveryEmail } = require("./email");
+const { notifyOrderDispatched, notifyOrderDelivered } = require("./notifications");
 
 const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 const INTEGRATION_KEY = "shiprocket";
@@ -991,14 +991,9 @@ async function generateLabelAndFulfill(orderId) {
       customerStatus: "dispatched",
       statusHistory: { ...order.statusHistory, dispatched: new Date() },
     });
-    sendOrderPackedEmail(order.id).catch((err) =>
+    notifyOrderDispatched(order.id).catch((err) =>
       console.error(
-        `Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
-      ),
-    );
-    sendOrderDispatchedWhatsApp(order.id).catch((err) =>
-      console.error(
-        `WhatsApp: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
+        `Notification: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
       ),
     );
   }
@@ -1125,24 +1120,20 @@ async function processStatusUpdate(orderId, rawStatus) {
   let emailTriggered = null;
   if (nextStatus === "picked_up") {
     emailTriggered = "order-packed";
-    sendOrderPackedEmail(order.id).catch((err) =>
-      console.error(`Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
-    sendOrderDispatchedWhatsApp(order.id).catch((err) =>
-      console.error(`WhatsApp: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    notifyOrderDispatched(order.id).catch((err) =>
+      console.error(`Notification: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
     );
   } else if (nextStatus === "out_for_delivery") {
     emailTriggered = "out-for-delivery";
+    // No WhatsApp template for this event (see utils/notifications.js) —
+    // always email, regardless of the order's notificationChannel.
     sendOrderOutForDeliveryEmail(order.id).catch((err) =>
       console.error(`Email: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
     );
   } else if (nextStatus === "delivered") {
     emailTriggered = "delivered";
-    sendOrderDeliveredEmail(order.id).catch((err) =>
-      console.error(`Email: delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
-    sendOrderDeliveredWhatsApp(order.id).catch((err) =>
-      console.error(`WhatsApp: order-delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    notifyOrderDelivered(order.id).catch((err) =>
+      console.error(`Notification: order-delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
     );
   }
 

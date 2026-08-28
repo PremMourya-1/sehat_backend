@@ -233,6 +233,18 @@ const Order = sequelize.define(
       type: DataTypes.JSONB,
       defaultValue: { confirmed: false, dispatched: false, delivered: false },
     },
+
+    // Snapshotted once at creation time from WebSettings' notificationChannel
+    // (see utils/webSettings.js, utils/orderCreation.js createOrderRecord) —
+    // never changed after that, so an order keeps notifying via whichever
+    // channel was active site-wide when it was placed, even if the admin
+    // flips the setting later. Nullable/no defaultValue on purpose: existing
+    // rows created before this field existed read back null, which
+    // utils/notifications.js treats as "email" (what they actually used).
+    notificationChannel: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
   },
   {
     tableName: "Orders",

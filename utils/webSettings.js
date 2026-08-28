@@ -51,6 +51,14 @@ const DEFAULT_SETTINGS = {
     targetDate: null,
     position: "below-header",
   },
+  // Which channel new orders use for status notifications (order
+  // confirmed/dispatched/delivered — see utils/notifications.js). Snapshotted
+  // onto each Order at creation time (utils/orderCreation.js
+  // createOrderRecord) rather than read live per-send, so changing this
+  // never affects an order already placed. "email" by default — "whatsapp"
+  // should only be selected once the relevant Meta templates are approved
+  // (see memory/whatsapp_integration_architecture.md).
+  notificationChannel: "email",
 };
 
 async function getSiteSettings() {

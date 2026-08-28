@@ -10,8 +10,7 @@ const { getRazorpayCredentials, verifyPaymentSignature } = require("../utils/raz
 const { convertAbandonedCheckout } = require("../utils/convertAbandonedCheckout");
 const { orderItemIncludes } = require("./orderController");
 const { emitNewOrder } = require("../utils/socket");
-const { sendOrderConfirmedEmail } = require("../utils/email");
-const { sendOrderConfirmedWhatsApp } = require("../utils/whatsapp");
+const { notifyOrderConfirmed } = require("../utils/notifications");
 const { getSiteSettings } = require("../utils/webSettings");
 
 const PINCODE_REGEX = /^[0-9]{6}$/;
@@ -108,11 +107,8 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
   // or the webhook fallback) actually converts the checkout first.
   if (!result.alreadyConverted) {
     emitNewOrder(result.order).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
-    sendOrderConfirmedEmail(result.order.id).catch((err) =>
-      console.error(`Email: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
-    );
-    sendOrderConfirmedWhatsApp(result.order.id).catch((err) =>
-      console.error(`WhatsApp: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
+    notifyOrderConfirmed(result.order.id).catch((err) =>
+      console.error(`Notification: order-confirmed send threw unexpectedly for order ${result.order.orderNumber}: ${err.message}`),
     );
   }
 

@@ -8,7 +8,7 @@ exports.getWebSettings = asyncHandler(async (req, res) => {
   return sendSuccess(res, settings);
 });
 
-// PUT /api/admin/web-settings  { codEnabled?, mobileVerificationRequired?, notifications?: { chromePushEnabled?, toastPopupEnabled?, soundEnabled? }, mixWeightIncrementsGrams?: number[], cartRewardMode?: "highest"|"all", launchCountdown?: { enabled?, title?, description?, endText?, targetDate?, position? } }
+// PUT /api/admin/web-settings  { codEnabled?, mobileVerificationRequired?, notifications?: { chromePushEnabled?, toastPopupEnabled?, soundEnabled? }, mixWeightIncrementsGrams?: number[], cartRewardMode?: "highest"|"all", launchCountdown?: { enabled?, title?, description?, endText?, targetDate?, position? }, notificationChannel?: "email"|"whatsapp" }
 exports.updateWebSettings = asyncHandler(async (req, res) => {
   const {
     codEnabled,
@@ -17,11 +17,19 @@ exports.updateWebSettings = asyncHandler(async (req, res) => {
     mixWeightIncrementsGrams,
     cartRewardMode,
     launchCountdown,
+    notificationChannel,
   } = req.body;
   const patch = {};
   if (codEnabled !== undefined) patch.codEnabled = Boolean(codEnabled);
   if (mobileVerificationRequired !== undefined)
     patch.mobileVerificationRequired = Boolean(mobileVerificationRequired);
+
+  if (notificationChannel !== undefined) {
+    if (!["email", "whatsapp"].includes(notificationChannel)) {
+      return sendError(res, 'notificationChannel must be "email" or "whatsapp"', 400);
+    }
+    patch.notificationChannel = notificationChannel;
+  }
 
   if (mixWeightIncrementsGrams !== undefined) {
     if (

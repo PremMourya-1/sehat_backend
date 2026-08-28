@@ -9,8 +9,7 @@ const { resolvePincodeLocation } = require("../utils/pincodeResolver");
 const { getCodAvailability } = require("../utils/checkCodAvailability");
 const { createRazorpayOrder, getRazorpayCredentials } = require("../utils/razorpay");
 const { emitNewOrder } = require("../utils/socket");
-const { sendOrderConfirmedEmail } = require("../utils/email");
-const { sendOrderConfirmedWhatsApp } = require("../utils/whatsapp");
+const { notifyOrderConfirmed } = require("../utils/notifications");
 const { getShippingCharge } = require("../utils/shippingZones");
 const { finalizeCancellation } = require("../utils/orderCancellation");
 const { createOrderRecord } = require("../utils/orderCreation");
@@ -200,11 +199,8 @@ exports.createOrder = asyncHandler(async (req, res) => {
 
     const fullOrder = await Order.findByPk(orderId, { include: orderItemIncludes });
     emitNewOrder(fullOrder).catch((err) => console.error(`Failed to emit new-order notification: ${err.message}`));
-    sendOrderConfirmedEmail(fullOrder.id).catch((err) =>
-      console.error(`Email: order-confirmed send threw unexpectedly for order ${fullOrder.orderNumber}: ${err.message}`),
-    );
-    sendOrderConfirmedWhatsApp(fullOrder.id).catch((err) =>
-      console.error(`WhatsApp: order-confirmed send threw unexpectedly for order ${fullOrder.orderNumber}: ${err.message}`),
+    notifyOrderConfirmed(fullOrder.id).catch((err) =>
+      console.error(`Notification: order-confirmed send threw unexpectedly for order ${fullOrder.orderNumber}: ${err.message}`),
     );
     return sendSuccess(res, { ...fullOrder.toJSON(), razorpay: null }, "Order placed successfully", 201);
   }

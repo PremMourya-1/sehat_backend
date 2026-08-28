@@ -1,5 +1,6 @@
 const { Order, OrderItem, ProductVariant, Cart, CartItem, Coupon } = require("../models");
 const generateOrderNumber = require("./generateOrderNumber");
+const { getSiteSettings } = require("./webSettings");
 
 // Builds the real Order + OrderItems (stock decrement, coupon usedCount,
 // server-side cart clear) — the one place that actually happens, shared by:
@@ -40,6 +41,12 @@ async function createOrderRecord({
   customerStatus,
   statusHistory,
 }) {
+  // Snapshotted once, here, so both creation paths (COD immediate, prepaid
+  // on-conversion) get it automatically without either caller needing to
+  // know about it — see models/Order.js notificationChannel and
+  // utils/notifications.js for where this is read back.
+  const { notificationChannel } = await getSiteSettings();
+
   const order = await Order.create(
     {
       orderNumber: generateOrderNumber(),
@@ -62,6 +69,7 @@ async function createOrderRecord({
       razorpayPaymentId: razorpayPaymentId || null,
       ...(customerStatus ? { customerStatus } : {}),
       statusHistory,
+      notificationChannel,
     },
     { transaction },
   );
