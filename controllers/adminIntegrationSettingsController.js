@@ -13,6 +13,7 @@ const shiprocket = require("../utils/shiprocket");
 const SENSITIVE_FIELDS = {
   shiprocket: ["password", "webhookSecret"],
   resend: ["apiKey"],
+  whatsapp: ["accessToken", "webhookVerifyToken"],
 };
 
 // Called right after an integration's settings are saved, so anything

@@ -3,6 +3,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { getRazorpayWebhookSecret, verifyWebhookSignature } = require("../utils/razorpay");
 const { getWebhookSecret: getShiprocketWebhookSecret, handleShiprocketStatusWebhook } = require("../utils/shiprocket");
+const { getWebhookVerifyToken: getWhatsappWebhookVerifyToken } = require("../utils/whatsapp");
 const { convertAbandonedCheckout } = require("../utils/convertAbandonedCheckout");
 const { emitNewOrder } = require("../utils/socket");
 const { sendOrderConfirmedEmail } = require("../utils/email");
@@ -118,4 +119,60 @@ exports.shiprocketWebhook = asyncHandler(async (req, res) => {
   // an order now never will be, so nothing a retry would fix. The raw
   // payload is logged either way for follow-up.
   return sendSuccess(res, null, "Webhook processed");
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp Business (Meta Cloud API) — see utils/whatsapp.js for credential
+// storage. Message-sending is a separate, later task; these two endpoints are
+// only the webhook plumbing Meta requires to be in place first.
+// ---------------------------------------------------------------------------
+
+// GET /api/webhooks/whatsapp — Meta's one-time (and re-run-on-demand)
+// webhook verification handshake, done from the Meta App Dashboard's
+// WhatsApp > Configuration > Webhook screen, not by WhatsApp users. Meta
+// sends hub.mode/hub.verify_token/hub.challenge as query params; responding
+// with the raw hub.challenge value (not JSON — see sendSuccess vs res.send
+// below) if hub.verify_token matches what's configured is what Meta's docs
+// require to accept the webhook URL. Public/no admin auth — verify_token
+// itself is the authentication, same role Shiprocket's webhook secret and
+// Razorpay's signature play for their own webhooks.
+exports.whatsappVerifyWebhook = asyncHandler(async (req, res) => {
+  const mode = req.query["hub.mode"];
+  const verifyToken = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  let expectedToken;
+  try {
+    expectedToken = await getWhatsappWebhookVerifyToken();
+  } catch (err) {
+    console.error(`WhatsApp webhook verify: ${err.message}`);
+    return res.sendStatus(500);
+  }
+
+  if (mode === "subscribe" && verifyToken === expectedToken) {
+    console.log("WhatsApp webhook: verification succeeded");
+    return res.status(200).send(challenge);
+  }
+
+  console.error("WhatsApp webhook verify: mode/token mismatch — possible spoofed request, rejecting");
+  return res.sendStatus(403);
+});
+
+// POST /api/webhooks/whatsapp — incoming message/status change events from
+// Meta (delivery receipts, inbound customer replies, template status, etc.).
+// For now this only logs the payload to confirm the endpoint is reachable
+// and receiving real events; parsing/acting on specific event types (e.g.
+// sending order-status messages back) is separate follow-up work once
+// credentials are actually configured in the admin panel.
+//
+// No signature check yet (Meta signs with X-Hub-Signature-256 using the
+// Meta App's own App Secret, which isn't one of the fields this task's
+// WhatsApp Settings page collects) — add one alongside an appSecret field if/
+// when this starts acting on the payload instead of just logging it.
+exports.whatsappWebhook = asyncHandler(async (req, res) => {
+  console.log("WhatsApp webhook received:", JSON.stringify(req.body));
+
+  // Always 200 — Meta retries/disables the webhook on repeated non-2xx, and
+  // there's nothing yet that could fail partway since this only logs.
+  return sendSuccess(res, null, "Webhook received");
 });
