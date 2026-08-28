@@ -22,6 +22,18 @@ const Product = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    // Nullable on purpose — this is an additive feature on a live site: new
+    // products get one automatically (see utils/generateSlug.js, called
+    // from controllers/adminProductController.js create/update), existing
+    // products keep working at their current UUID URL until they're next
+    // saved, no backfill/migration ever forces one. See
+    // controllers/productController.js getProductById for the
+    // slug-first-then-id lookup this enables.
+    slug: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: true,
+    },
     shortDescription: {
       type: DataTypes.STRING(300),
       allowNull: true,

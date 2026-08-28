@@ -2,6 +2,7 @@ const { Product, ProductImage, ProductVariant, Category } = require("../models")
 const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { deleteUploadedImage } = require("../utils/imageStorage");
+const { generateUniqueProductSlug } = require("../utils/generateSlug");
 
 const productIncludes = [
   { model: Category, attributes: ["id", "name"] },
@@ -150,8 +151,19 @@ exports.createProduct = asyncHandler(async (req, res) => {
   const nutrition = parseNutrition(req.body.nutrition);
   const composition = parseComposition(req.body.composition);
 
+  // Uses the admin's own slug override if they typed one (see ProductForm.jsx
+  // — auto-suggested from the name, editable before save); falls back to the
+  // name itself otherwise. Either way, generateUniqueProductSlug() is what
+  // actually normalizes it and guarantees uniqueness — never trusts the raw
+  // input as final.
+  const slug = await generateUniqueProductSlug({
+    Product,
+    baseText: req.body.slug?.trim() || name,
+  });
+
   const product = await Product.create({
     name,
+    slug,
     categoryId: categoryId || null,
     shortDescription,
     longDescription,
@@ -234,6 +246,18 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   if (mixCategory !== undefined) product.mixCategory = mixCategory || null;
   if (req.body.nutrition !== undefined) product.nutrition = parseNutrition(req.body.nutrition) || null;
   if (req.body.composition !== undefined) product.composition = parseComposition(req.body.composition) || null;
+
+  // Every save re-derives the slug — from the admin's own override if they
+  // typed one (ProductForm.jsx auto-suggests from the name but lets them
+  // edit it), else from product.name (already reflecting the update above,
+  // if the name changed this same save). excludeId is required here —
+  // without it a product saved twice unchanged would collide with its own
+  // existing slug and get bumped to "-2" every time.
+  product.slug = await generateUniqueProductSlug({
+    Product,
+    baseText: req.body.slug?.trim() || product.name,
+    excludeId: product.id,
+  });
 
   await product.save();
 

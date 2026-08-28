@@ -28,6 +28,7 @@ function serializeProduct(product) {
   const p = product.toJSON ? product.toJSON() : product;
   return {
     id: p.id,
+    slug: p.slug || null,
     name: p.name,
     categoryId: p.categoryId,
     category: p.Category ? { id: p.Category.id, name: p.Category.name } : null,
@@ -66,12 +67,33 @@ exports.getProducts = asyncHandler(async (req, res) => {
   return sendSuccess(res, products.map(serializeProduct));
 });
 
-// GET /api/products/:id
+// Matches a UUID exactly (Product.id's format) — used to decide whether
+// the route param is even worth trying as an `id` lookup at all. Without
+// this guard, passing a non-UUID string (a slug, or a bad URL) straight
+// into a `where: { id: ... }` query throws a Postgres type-cast error
+// ("invalid input syntax for type uuid") instead of a clean 404.
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GET /api/products/:id — `:id` is really "slug or id": every NEW/edited
+// product gets a slug (see controllers/adminProductController.js +
+// utils/generateSlug.js) and is reachable at its clean slug URL, but a
+// product that hasn't been saved since this feature shipped has slug:null
+// and stays reachable at its existing UUID URL exactly as before — no
+// backfill, no redirect, both forms just work side by side indefinitely.
 exports.getProductById = asyncHandler(async (req, res) => {
-  const product = await Product.findOne({
-    where: { id: req.params.id, status: true },
+  const param = req.params.id;
+
+  let product = await Product.findOne({
+    where: { slug: param, status: true },
     include: productIncludes,
   });
+
+  if (!product && UUID_REGEX.test(param)) {
+    product = await Product.findOne({
+      where: { id: param, status: true },
+      include: productIncludes,
+    });
+  }
 
   if (!product) return sendError(res, "Product not found", 404);
   return sendSuccess(res, serializeProduct(product));
