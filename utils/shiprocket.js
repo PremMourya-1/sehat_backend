@@ -8,6 +8,7 @@ const {
 const { encrypt, decrypt } = require("./encryption");
 const { retryAsync } = require("./retry");
 const { sendOrderPackedEmail, sendOrderOutForDeliveryEmail, sendOrderDeliveredEmail } = require("./email");
+const { sendOrderDispatchedWhatsApp, sendOrderDeliveredWhatsApp } = require("./whatsapp");
 
 const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 const INTEGRATION_KEY = "shiprocket";
@@ -995,6 +996,11 @@ async function generateLabelAndFulfill(orderId) {
         `Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
       ),
     );
+    sendOrderDispatchedWhatsApp(order.id).catch((err) =>
+      console.error(
+        `WhatsApp: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`,
+      ),
+    );
   }
 
   return schedulePickup(order.shiprocketShipmentId);
@@ -1122,6 +1128,9 @@ async function processStatusUpdate(orderId, rawStatus) {
     sendOrderPackedEmail(order.id).catch((err) =>
       console.error(`Email: order-packed send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
     );
+    sendOrderDispatchedWhatsApp(order.id).catch((err) =>
+      console.error(`WhatsApp: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
   } else if (nextStatus === "out_for_delivery") {
     emailTriggered = "out-for-delivery";
     sendOrderOutForDeliveryEmail(order.id).catch((err) =>
@@ -1131,6 +1140,9 @@ async function processStatusUpdate(orderId, rawStatus) {
     emailTriggered = "delivered";
     sendOrderDeliveredEmail(order.id).catch((err) =>
       console.error(`Email: delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+    );
+    sendOrderDeliveredWhatsApp(order.id).catch((err) =>
+      console.error(`WhatsApp: order-delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
     );
   }
 
