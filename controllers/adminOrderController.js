@@ -20,11 +20,14 @@ const SIMULATABLE_STATUSES = {
   rto: "RTO Initiated",
 };
 
-// Friendly names for the "which email was triggered" note in the admin UI —
-// deliberately not reusing CUSTOMER_STATUS_LABELS (that's the *status*
-// label; this is the *email* name, a different vocabulary that happens to
-// overlap for two of these three).
-const EMAIL_LABELS = {
+// Friendly names for the "which notification event fired" note in the
+// admin UI — deliberately not reusing CUSTOMER_STATUS_LABELS (that's the
+// *status* label; this is the *notification event* name, a different
+// vocabulary that happens to overlap for two of these three). This says
+// WHICH EVENT fired, nothing about which channel (email/WhatsApp) or
+// whether it actually succeeded — see `notificationOutcome` in the
+// response below for that.
+const NOTIFICATION_EVENT_LABELS = {
   "order-packed": "Order Packed",
   "out-for-delivery": "Out for Delivery",
   delivered: "Delivered",
@@ -256,7 +259,12 @@ exports.simulateStatusUpdate = asyncHandler(async (req, res) => {
   const order = await Order.findByPk(req.params.id);
   if (!order) return sendError(res, "Order not found", 404);
 
-  const result = await processStatusUpdate(order.id, rawStatus);
+  // awaitNotification: true — this is the one caller that should actually
+  // wait for and report the real outcome (see processStatusUpdate's own
+  // comment for why the real webhook path never passes this). Without it,
+  // this admin-facing test tool's whole purpose — seeing whether a
+  // notification really went out — silently doesn't work.
+  const result = await processStatusUpdate(order.id, rawStatus, { awaitNotification: true });
 
   // Logged the same as a real webhook event (ShiprocketWebhookLog), just
   // marked source: "admin-simulation" so it's never mistaken for a real
@@ -280,7 +288,13 @@ exports.simulateStatusUpdate = asyncHandler(async (req, res) => {
       order: updated,
       skipped: result.skipped || false,
       reason: result.reason || null,
-      emailTriggered: EMAIL_LABELS[result.emailTriggered] || null,
+      notificationEvent: NOTIFICATION_EVENT_LABELS[result.notificationEvent] || null,
+      // The actual channel used + whether it succeeded — e.g.
+      // { channel: "whatsapp", success: false, error: "WhatsApp send
+      // failed (400)" }. This is what actually answers "did the
+      // notification go out", not notificationEvent above (that's only
+      // ever the event NAME, same regardless of channel/outcome).
+      notificationOutcome: result.notificationOutcome || null,
     },
     result.skipped ? `No change — ${result.reason}` : "Status simulated successfully",
   );

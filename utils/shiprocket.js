@@ -1080,7 +1080,22 @@ function isForwardProgress(currentCustomerStatus, nextCustomerStatus) {
 // no-op, same "already applied is still success" contract as
 // utils/convertAbandonedCheckout.js. Never throws — same { success, error }
 // contract as every step above.
-async function processStatusUpdate(orderId, rawStatus) {
+//
+// `awaitNotification` (default false, fire-and-forget — the real webhook
+// path via handleShiprocketStatusWebhook never passes true, so a slow/
+// hung email or WhatsApp API call can never delay the webhook response
+// Shiprocket is waiting on) — pass true (only the admin Test Status
+// Simulator does — see adminOrderController.js simulateStatusUpdate) to
+// actually wait for the notify call and report what really happened via
+// `notificationOutcome`. Without this, a failed WhatsApp send (e.g. the
+// 2026-08-29 wrong-phoneNumberId incident) was invisible: the simulator's
+// response only ever showed a fixed event-name label ("Out for Delivery")
+// that looked like a channel/success indicator but was set unconditionally
+// regardless of what the (un-awaited, .catch()-only) notify call actually
+// did — an admin reading "Out for Delivery" back had no way to tell it
+// wasn't reporting "email was sent", "WhatsApp was sent", or anything
+// about success at all.
+async function processStatusUpdate(orderId, rawStatus, { awaitNotification = false } = {}) {
   const order = await Order.findByPk(orderId);
   if (!order) {
     const error = `No order found with id ${orderId}`;
@@ -1109,32 +1124,53 @@ async function processStatusUpdate(orderId, rawStatus) {
   });
   console.log(`Shiprocket status update: order ${order.orderNumber} customerStatus -> ${nextStatus} (raw status: "${rawStatus}")`);
 
-  // "picked_up" also fires the "Order Packed" email — the real pickup-scan
-  // event Step B originally wanted, running alongside (not replacing) the
-  // label-generation-time fallback in generateLabelAndFulfill above, since
-  // both are guarded by the same emailsSent.packed flag: whichever fires
-  // first wins, and webhook delivery isn't guaranteed (not yet configured,
-  // or a delivery hiccup on Shiprocket's side), so the fallback stays as a
+  // "picked_up" also fires the "Order Packed" notification — the real
+  // pickup-scan event Step B originally wanted, running alongside (not
+  // replacing) the label-generation-time fallback in
+  // generateLabelAndFulfill above, since both are guarded by the same
+  // emailsSent.packed/whatsappSent.dispatched flags: whichever fires first
+  // wins, and webhook delivery isn't guaranteed (not yet configured, or a
+  // delivery hiccup on Shiprocket's side), so the fallback stays as a
   // safety net rather than being replaced outright.
-  let emailTriggered = null;
+  //
+  // `notificationEvent` is just WHICH EVENT fired ("order-packed"/
+  // "out-for-delivery"/"delivered") — it says nothing about which channel
+  // was used or whether the send actually succeeded (that's
+  // notificationOutcome below, only ever populated when awaitNotification
+  // is true). Do not rename this back to "emailTriggered" — that name is
+  // exactly what caused the 2026-08-29 confusion, reading like a channel/
+  // success indicator when it was neither.
+  let notificationEvent = null;
+  let notificationPromise = null;
   if (nextStatus === "picked_up") {
-    emailTriggered = "order-packed";
-    notifyOrderDispatched(order.id).catch((err) =>
-      console.error(`Notification: order-dispatched send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
+    notificationEvent = "order-packed";
+    notificationPromise = notifyOrderDispatched(order.id);
   } else if (nextStatus === "out_for_delivery") {
-    emailTriggered = "out-for-delivery";
-    notifyOrderOutForDelivery(order.id).catch((err) =>
-      console.error(`Notification: out-for-delivery send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
+    notificationEvent = "out-for-delivery";
+    notificationPromise = notifyOrderOutForDelivery(order.id);
   } else if (nextStatus === "delivered") {
-    emailTriggered = "delivered";
-    notifyOrderDelivered(order.id).catch((err) =>
-      console.error(`Notification: order-delivered send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
-    );
+    notificationEvent = "delivered";
+    notificationPromise = notifyOrderDelivered(order.id);
   }
 
-  return { success: true, orderId: order.id, customerStatus: nextStatus, emailTriggered };
+  let notificationOutcome = null;
+  if (notificationPromise) {
+    if (awaitNotification) {
+      const channel = order.notificationChannel === "whatsapp" ? "whatsapp" : "email";
+      try {
+        const result = await notificationPromise;
+        notificationOutcome = { channel, success: Boolean(result?.success), skipped: Boolean(result?.skipped), error: result?.error || null };
+      } catch (err) {
+        notificationOutcome = { channel, success: false, skipped: false, error: err.message };
+      }
+    } else {
+      notificationPromise.catch((err) =>
+        console.error(`Notification: ${notificationEvent} send threw unexpectedly for order ${order.orderNumber}: ${err.message}`),
+      );
+    }
+  }
+
+  return { success: true, orderId: order.id, customerStatus: nextStatus, notificationEvent, notificationOutcome };
 }
 
 // Resolves which order a real Shiprocket webhook payload is about, then
