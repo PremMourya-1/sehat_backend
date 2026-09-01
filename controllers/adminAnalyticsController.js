@@ -9,21 +9,19 @@ const {
   daysAgoIST,
   resolveRange,
 } = require("../utils/analyticsDateRanges");
+const { REVENUE_ELIGIBLE } = require("../utils/revenueEligibility");
 
 // Convention used consistently across every endpoint in this file: revenue
 // and AOV always exclude "cancelled" orders (a cancelled order never
 // realized any revenue, even though its `total` column still holds a real
 // number) — same reasoning the best-sellers endpoint already needs to
-// apply explicitly. Also excludes "payment_pending"/"payment_failed" —
-// legacy customerStatus values from a since-replaced prepaid-checkout
-// design (see models/Order.js's own comment) that no new order can reach,
-// but a historical row could still carry if one was ever kept rather than
-// deleted (see the AbandonedCheckout redesign) — never realized revenue
-// either way. Plain order *counts* (top-line "Orders" stat, status
-// breakdown, top locations, new-vs-returning) intentionally include every
-// status, cancelled included, since those describe order *volume/activity*
-// rather than money earned.
-const REVENUE_ELIGIBLE = { customerStatus: { [Op.notIn]: ["cancelled", "payment_pending", "payment_failed"] } };
+// apply explicitly. Also excludes "payment_pending"/"payment_failed" — see
+// utils/revenueEligibility.js for the full reasoning (shared with
+// adminSalesReportController.js so this can never drift between the two).
+// Plain order *counts* (top-line "Orders" stat, status breakdown, top
+// locations, new-vs-returning) intentionally include every status,
+// cancelled included, since those describe order *volume/activity* rather
+// than money earned.
 
 async function revenueAndCount(where) {
   const row = await Order.findOne({

@@ -12,6 +12,7 @@ const {
   getBreakdown,
   getBestSellers,
 } = require("../controllers/adminAnalyticsController");
+const { getSalesByProduct, getSalesByDate } = require("../controllers/adminSalesReportController");
 const { previewPricing, bulkUpdatePricing } = require("../controllers/adminPricingController");
 const {
   getAllProducts,
@@ -125,6 +126,11 @@ router.get("/analytics/overview", getOverview);
 router.get("/analytics/trends", getTrends);
 router.get("/analytics/breakdown", getBreakdown);
 router.get("/analytics/best-sellers", getBestSellers);
+
+// --- Inventory: Sales Reports (first feature under this section — more
+// inventory-management endpoints will be added here later) ---
+router.get("/reports/sales/by-product", getSalesByProduct);
+router.get("/reports/sales/by-date", getSalesByDate);
 
 // --- Product Pricing ---
 router.get("/pricing/preview", previewPricing);
