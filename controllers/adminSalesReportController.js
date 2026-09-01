@@ -62,28 +62,66 @@ exports.getSalesByProduct = asyncHandler(async (req, res) => {
   const productInclude = { model: Product, attributes: ["id", "name", "image"], required: true };
   if (categoryId) productInclude.where = { categoryId };
 
-  const rows = await OrderItem.findAll({
-    attributes: [
-      "productId",
-      [fn("SUM", col("OrderItem.quantity")), "unitsSold"],
-      [fn("SUM", literal(`"OrderItem"."price" * "OrderItem"."quantity"`)), "revenue"],
-    ],
-    include: [
-      productInclude,
-      { model: Order, attributes: [], where: { createdAt: { [Op.gte]: start, [Op.lte]: end }, ...REVENUE_ELIGIBLE }, required: true },
-    ],
-    where: itemWhere,
-    group: ["OrderItem.productId", "Product.id"],
-    order: [[literal(sortByUnits ? '"unitsSold"' : "revenue"), direction]],
-    subQuery: false,
-  });
+  const orderInclude = {
+    model: Order,
+    attributes: [],
+    where: { createdAt: { [Op.gte]: start, [Op.lte]: end }, ...REVENUE_ELIGIBLE },
+    required: true,
+  };
 
-  const products = rows.map((r) => ({
+  // Second, leaner query grouped one step further by OrderItem.weight (the
+  // pack-size snapshot, e.g. "250g"/"1kg") so each product row below can
+  // show a per-variant breakdown ("which pack size sold how much") without
+  // splitting the top-level, sortable one-row-per-product table itself.
+  const variantProductJoin = { model: Product, attributes: [], required: true };
+  if (categoryId) variantProductJoin.where = { categoryId };
+
+  const [totalRows, variantRows] = await Promise.all([
+    OrderItem.findAll({
+      attributes: [
+        "productId",
+        [fn("SUM", col("OrderItem.quantity")), "unitsSold"],
+        [fn("SUM", literal(`"OrderItem"."price" * "OrderItem"."quantity"`)), "revenue"],
+      ],
+      include: [productInclude, orderInclude],
+      where: itemWhere,
+      group: ["OrderItem.productId", "Product.id"],
+      order: [[literal(sortByUnits ? '"unitsSold"' : "revenue"), direction]],
+      subQuery: false,
+    }),
+    OrderItem.findAll({
+      attributes: [
+        "productId",
+        "weight",
+        [fn("SUM", col("OrderItem.quantity")), "unitsSold"],
+        [fn("SUM", literal(`"OrderItem"."price" * "OrderItem"."quantity"`)), "revenue"],
+      ],
+      include: [variantProductJoin, orderInclude],
+      where: itemWhere,
+      group: ["OrderItem.productId", "OrderItem.weight"],
+      subQuery: false,
+      raw: true,
+    }),
+  ]);
+
+  const variantsByProduct = new Map();
+  for (const row of variantRows) {
+    const list = variantsByProduct.get(row.productId) || [];
+    list.push({
+      weight: row.weight || "Unspecified",
+      unitsSold: Number(row.unitsSold),
+      revenue: Number(row.revenue),
+    });
+    variantsByProduct.set(row.productId, list);
+  }
+
+  const products = totalRows.map((r) => ({
     productId: r.productId,
     name: r.Product?.name || "Unknown product",
     image: r.Product?.image || null,
     unitsSold: Number(r.get("unitsSold")),
     revenue: Number(r.get("revenue")),
+    variants: variantsByProduct.get(r.productId) || [],
   }));
 
   return sendSuccess(res, { range: { start, end }, products });
@@ -128,6 +166,7 @@ exports.getSalesByDate = asyncHandler(async (req, res) => {
       attributes: [
         [dayBucket, "date"],
         "productId",
+        "weight",
         [fn("SUM", col("OrderItem.quantity")), "unitsSold"],
         [fn("SUM", literal(`"OrderItem"."price" * "OrderItem"."quantity"`)), "revenue"],
       ],
@@ -136,30 +175,43 @@ exports.getSalesByDate = asyncHandler(async (req, res) => {
         { model: Order, attributes: [], where: orderWhere, required: true },
       ],
       where: { productId: { [Op.ne]: null } },
-      group: [dayBucket, "OrderItem.productId", "Product.id"],
+      group: [dayBucket, "OrderItem.productId", "OrderItem.weight", "Product.id"],
       order: [[dayBucket, "ASC"]],
       subQuery: false,
     }),
   ]);
 
-  const productsByDate = new Map();
+  // Grouped one step further by weight (pack size, e.g. "250g"/"1kg") than
+  // the product itself — so a product sold in two different pack sizes on
+  // the same day comes back as one product entry with a nested `variants`
+  // breakdown, same shape getSalesByProduct uses, rather than as two
+  // separate top-level product rows (which would double-count the product
+  // in the per-day list for no useful reason).
+  const productsByDate = new Map(); // date -> Map(productId -> product entry)
   for (const row of productRows) {
     const date = row.get("date");
-    const list = productsByDate.get(date) || [];
-    list.push({
+    const productMap = productsByDate.get(date) || new Map();
+    const unitsSold = Number(row.get("unitsSold"));
+    const revenue = Number(row.get("revenue"));
+    const existing = productMap.get(row.productId) || {
       productId: row.productId,
       name: row.Product?.name || "Unknown product",
-      unitsSold: Number(row.get("unitsSold")),
-      revenue: Number(row.get("revenue")),
-    });
-    productsByDate.set(date, list);
+      unitsSold: 0,
+      revenue: 0,
+      variants: [],
+    };
+    existing.unitsSold += unitsSold;
+    existing.revenue += revenue;
+    existing.variants.push({ weight: row.weight || "Unspecified", unitsSold, revenue });
+    productMap.set(row.productId, existing);
+    productsByDate.set(date, productMap);
   }
 
   const days = dailyTotals.map((row) => ({
     date: row.date,
     revenue: Number(row.revenue),
     orderCount: Number(row.orderCount),
-    products: productsByDate.get(row.date) || [],
+    products: productsByDate.has(row.date) ? Array.from(productsByDate.get(row.date).values()) : [],
   }));
 
   return sendSuccess(res, { range: { start, end }, days });
