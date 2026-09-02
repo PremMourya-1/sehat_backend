@@ -31,6 +31,7 @@ const Sale = require("./Sale");
 const CartRewardTier = require("./CartRewardTier");
 const PriceUpdateLog = require("./PriceUpdateLog");
 const AbandonedCheckout = require("./AbandonedCheckout");
+const ImpersonationLog = require("./ImpersonationLog");
 
 // Category <-> Product
 Category.hasMany(Product, { foreignKey: "categoryId" });
@@ -145,6 +146,16 @@ AbandonedCheckout.belongsTo(Customer, { foreignKey: "customerId" });
 Order.hasMany(ShiprocketWebhookLog, { foreignKey: "orderId" });
 ShiprocketWebhookLog.belongsTo(Order, { foreignKey: "orderId" });
 
+// Admin <-> ImpersonationLog, Customer <-> ImpersonationLog (audit trail
+// for the admin "Login as Customer" tool — see
+// controllers/adminCustomerController.js impersonateCustomer). No onDelete
+// cascade either direction — this is a permanent record, same reasoning as
+// PriceUpdateLog/ShiprocketWebhookLog above.
+Admin.hasMany(ImpersonationLog, { foreignKey: "adminId" });
+ImpersonationLog.belongsTo(Admin, { foreignKey: "adminId" });
+Customer.hasMany(ImpersonationLog, { foreignKey: "customerId" });
+ImpersonationLog.belongsTo(Customer, { foreignKey: "customerId" });
+
 module.exports = {
   sequelize,
   Admin,
@@ -179,4 +190,5 @@ module.exports = {
   CartRewardTier,
   PriceUpdateLog,
   AbandonedCheckout,
+  ImpersonationLog,
 };

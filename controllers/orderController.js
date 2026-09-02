@@ -291,6 +291,22 @@ exports.getRecentOrders = asyncHandler(async (req, res) => {
   return sendSuccess(res, orders);
 });
 
+// GET /api/orders/last-shipping — just the shipping fields off the
+// customer's single most recent order (any status — even a cancelled one
+// still had a real, presumably-correct address), for checkout's
+// autofill-from-last-order feature. Returns null (not 404) when the
+// customer has no past orders yet, so the frontend can just treat "no
+// autofill" as the normal empty-checkout-form case rather than an error.
+exports.getLastOrderShipping = asyncHandler(async (req, res) => {
+  const order = await Order.findOne({
+    where: { customerId: req.customer.id },
+    attributes: ["shippingName", "shippingPhone", "alternateMobile", "shippingAddress", "shippingPincode"],
+    order: [["createdAt", "DESC"]],
+  });
+
+  return sendSuccess(res, order || null);
+});
+
 // GET /api/orders/:id — includes everything the list endpoint above does,
 // plus courierName/awbCode (already plain Order columns) and a computed
 // trackingUrl for the "Track on Shiprocket" link on the order detail page.

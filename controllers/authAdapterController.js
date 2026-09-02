@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
 const { Customer, Account, VerificationToken } = require("../models");
 const asyncHandler = require("../utils/asyncHandler");
@@ -190,6 +191,35 @@ exports.verifyCredentials = asyncHandler(async (req, res) => {
       .status(200)
       .json({ status: "unverified", email: customer.email });
   }
+
+  return res.status(200).json({ status: "ok", user: toAdapterUser(customer) });
+});
+
+// POST /verify-impersonation-token — backs the "impersonation" NextAuth
+// provider (see sehat-potli-front's src/auth.js), the admin panel's "Login
+// as Customer" tool. `token` is the short-lived ticket
+// controllers/adminCustomerController.js impersonateCustomer just issued —
+// verified here the same way any other JWT this API issues is verified,
+// EXCEPT it must carry `type: "impersonation"` (a normal customer API
+// token, or an admin token, must never work here). Same always-200,
+// `status`-field response shape as verifyCredentials above, for the exact
+// same reason (this runs inside NextAuth's authorize(), server-side).
+exports.verifyImpersonationToken = asyncHandler(async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(200).json({ status: "invalid" });
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(200).json({ status: "invalid" });
+  }
+  if (decoded.type !== "impersonation" || !decoded.id) {
+    return res.status(200).json({ status: "invalid" });
+  }
+
+  const customer = await Customer.findByPk(decoded.id);
+  if (!customer) return res.status(200).json({ status: "invalid" });
 
   return res.status(200).json({ status: "ok", user: toAdapterUser(customer) });
 });

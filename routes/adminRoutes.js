@@ -38,7 +38,7 @@ const {
   simulateStatusUpdate,
   cancelOrder,
 } = require("../controllers/adminOrderController");
-const { getAllCustomers, getCustomerById } = require("../controllers/adminCustomerController");
+const { getAllCustomers, getCustomerById, impersonateCustomer } = require("../controllers/adminCustomerController");
 const {
   getAllCoupons,
   getCouponById,
@@ -163,6 +163,7 @@ router.post("/orders/:id/cancel", cancelOrder);
 // --- Customers (read-only) ---
 router.get("/customers", getAllCustomers);
 router.get("/customers/:id", getCustomerById);
+router.post("/customers/:id/impersonate", impersonateCustomer);
 
 // --- Coupons ---
 router.get("/coupons", getAllCoupons);

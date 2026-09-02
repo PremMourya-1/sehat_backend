@@ -12,6 +12,7 @@ const {
   createVerificationToken,
   useVerificationToken,
   verifyCredentials,
+  verifyImpersonationToken,
 } = require("../controllers/authAdapterController");
 
 router.use(internalAuth);
@@ -29,5 +30,6 @@ router.post("/verification-tokens", createVerificationToken);
 router.post("/verification-tokens/use", useVerificationToken);
 
 router.post("/verify-credentials", verifyCredentials);
+router.post("/verify-impersonation-token", verifyImpersonationToken);
 
 module.exports = router;
