@@ -358,6 +358,40 @@ async function sendOrderDeliveredWhatsApp(orderId) {
   }
 }
 
+// Dummy body parameters for each of the 4 order-status events — same
+// shape/order as the real senders above (sendOrderConfirmedWhatsApp etc.)
+// build for a real order, just with placeholder values instead of a real
+// Customer/Order record. Used only by sendTestWhatsappMessage() below, so
+// an admin can confirm a template is actually APPROVED and actually
+// deliverable (right credentials, right permissions) against their own
+// phone, without needing a real order to walk through every status.
+const TEST_PARAMS_BY_EVENT = {
+  orderConfirmed: ["Test Customer", "TEST-0001", "999"],
+  orderDispatched: ["Test Customer", "TEST-0001", "Test Courier", "1 Jan 2030", "https://sehatpotli.in/account/orders/test"],
+  orderOutForDelivery: ["Test Customer", "TEST-0001"],
+  orderDelivered: ["Test Customer", "TEST-0001"],
+};
+
+// Sends one of the 4 order-status templates to an arbitrary phone number
+// with dummy placeholder data — no Order/Customer lookup, no whatsappSent
+// flag, no send-once guard. Unlike the real order-status senders above,
+// this THROWS on failure (same convention as sendOtpWhatsApp) so the admin
+// "Send Test Message" panel (Settings > Notifications) can show the exact
+// Meta error back — that's the entire point of a test button: telling the
+// admin WHY a real send would fail (unapproved template, bad credentials,
+// missing send permission — see round 1-3 in
+// memory/whatsapp_integration_architecture.md) rather than swallowing it.
+async function sendTestWhatsappMessage(phoneNumber, event) {
+  const params = TEST_PARAMS_BY_EVENT[event];
+  if (!params) {
+    throw new Error(`Unknown event "${event}" — expected one of ${Object.keys(TEST_PARAMS_BY_EVENT).join(", ")}`);
+  }
+  const templateName = await getTemplateName(event);
+  return sendTemplateMessage(phoneNumber, templateName, TEMPLATE_LANGUAGE, [
+    { type: "body", parameters: params.map((text) => ({ type: "text", text })) },
+  ]);
+}
+
 // Sends the OTP via Meta's Authentication template category. Unlike the
 // order-status senders above, this THROWS on failure rather than
 // swallowing it — it's called from utils/otpProviders/whatsapp.js, which
@@ -463,6 +497,7 @@ module.exports = {
   sendOrderDispatchedWhatsApp,
   sendOrderOutForDeliveryWhatsApp,
   sendOrderDeliveredWhatsApp,
+  sendTestWhatsappMessage,
   sendOtpWhatsApp,
   submitAllTemplates,
   listTemplateStatuses,

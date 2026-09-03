@@ -81,6 +81,7 @@ const {
 const {
   getIntegrationSettings,
   updateIntegrationSettings,
+  sendTestWhatsappTemplate,
 } = require("../controllers/adminIntegrationSettingsController");
 const {
   getRazorpaySettings,
@@ -228,6 +229,9 @@ router.put("/integrations/razorpay", updateRazorpaySettings);
 // Shiprocket today; generic for future flat-config integrations.
 router.get("/integrations/:key", getIntegrationSettings);
 router.put("/integrations/:key", updateIntegrationSettings);
+// WhatsApp test-send — a 3-segment path, never matched by the single-segment
+// ":key" routes above regardless of registration order.
+router.post("/integrations/whatsapp/test-send", sendTestWhatsappTemplate);
 
 // --- Web Settings (site-wide business settings — COD toggle today) ---
 router.get("/web-settings", getWebSettings);

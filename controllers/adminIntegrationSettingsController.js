@@ -3,6 +3,11 @@ const asyncHandler = require("../utils/asyncHandler");
 const { sendSuccess, sendError } = require("../utils/response");
 const { encrypt } = require("../utils/encryption");
 const shiprocket = require("../utils/shiprocket");
+const whatsapp = require("../utils/whatsapp");
+
+// Events sendTestWhatsappTemplate below will accept — same 4 order-status
+// events utils/whatsapp.js's TEST_PARAMS_BY_EVENT has dummy data for.
+const TESTABLE_WHATSAPP_EVENTS = ["orderConfirmed", "orderDispatched", "orderOutForDelivery", "orderDelivered"];
 
 // Which config fields must be stored encrypted, per integration. Adding a
 // new integration is just a new entry here — no new table, no new controller
@@ -89,4 +94,28 @@ exports.updateIntegrationSettings = asyncHandler(async (req, res) => {
     },
     "Settings updated successfully",
   );
+});
+
+// POST /api/admin/integrations/whatsapp/test-send  { phoneNumber, event }
+// Sends one of the 4 order-status templates, with dummy placeholder data,
+// straight to an arbitrary number — lets an admin confirm a template is
+// really APPROVED and really deliverable (credentials, phone number ID,
+// send permission) on demand, without needing a real order to walk through
+// every status first. See utils/whatsapp.js sendTestWhatsappMessage — unlike
+// every other WhatsApp sender in this codebase, that one THROWS on failure
+// on purpose, so the real Meta error reaches the admin here instead of only
+// ever being logged server-side.
+exports.sendTestWhatsappTemplate = asyncHandler(async (req, res) => {
+  const { phoneNumber, event } = req.body;
+  if (!phoneNumber) return sendError(res, "phoneNumber is required", 400);
+  if (!TESTABLE_WHATSAPP_EVENTS.includes(event)) {
+    return sendError(res, `event must be one of: ${TESTABLE_WHATSAPP_EVENTS.join(", ")}`, 400);
+  }
+
+  try {
+    await whatsapp.sendTestWhatsappMessage(phoneNumber, event);
+    return sendSuccess(res, {}, "Test message sent — check the WhatsApp number for delivery.");
+  } catch (err) {
+    return sendError(res, err.message || "Test message failed to send", 400);
+  }
 });
