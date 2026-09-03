@@ -64,6 +64,23 @@ async function getTemplateName(event) {
   return config.templates?.[event] || DEFAULT_TEMPLATE_NAMES[event];
 }
 
+// Reads the active language code for the 4 order-status templates —
+// config.templateLanguage if the admin has set one, else TEMPLATE_LANGUAGE
+// ("en_US"). Admin-configurable for the same reason getTemplateName() is:
+// Meta's send call fails with error 132001 ("Template name does not exist
+// in the translation") if the language code here doesn't exactly match how
+// the template was approved in WhatsApp Manager — and templates submitted
+// by hand through the Manager UI (as these were) commonly end up approved
+// under plain "English" (en) rather than "English (US)" (en_US) unless
+// that's deliberately picked. Making this a Settings-page edit instead of a
+// hardcoded constant means fixing a language mismatch never needs a
+// redeploy. Not used for the OTP/Authentication template — see TEMPLATES.otp
+// above, that one stays on TEMPLATE_LANGUAGE like its name is unconfigurable.
+async function getTemplateLanguage() {
+  const config = await getConfig();
+  return config.templateLanguage || TEMPLATE_LANGUAGE;
+}
+
 // The exact drafts to submit for Meta review (WhatsApp Manager > Account
 // Tools > Message Templates, or via submitAllTemplates()/scripts/
 // submitWhatsappTemplates.js below) — kept here so the submitted wording
@@ -242,7 +259,8 @@ async function sendOrderConfirmedWhatsApp(orderId) {
   try {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
     const templateName = await getTemplateName("orderConfirmed");
-    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
+    const languageCode = await getTemplateLanguage();
+    await sendTemplateMessage(order.shippingPhone, templateName, languageCode, [
       {
         type: "body",
         parameters: [
@@ -275,7 +293,8 @@ async function sendOrderDispatchedWhatsApp(orderId) {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
     const trackingUrl = `${process.env.STORE_FRONT_URL || "https://sehatpotli.in"}/account/orders/${order.id}`;
     const templateName = await getTemplateName("orderDispatched");
-    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
+    const languageCode = await getTemplateLanguage();
+    await sendTemplateMessage(order.shippingPhone, templateName, languageCode, [
       {
         type: "body",
         parameters: [
@@ -310,7 +329,8 @@ async function sendOrderOutForDeliveryWhatsApp(orderId) {
   try {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
     const templateName = await getTemplateName("orderOutForDelivery");
-    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
+    const languageCode = await getTemplateLanguage();
+    await sendTemplateMessage(order.shippingPhone, templateName, languageCode, [
       {
         type: "body",
         parameters: [
@@ -340,7 +360,8 @@ async function sendOrderDeliveredWhatsApp(orderId) {
   try {
     if (!order.shippingPhone) throw new Error("Order has no shipping phone on file");
     const templateName = await getTemplateName("orderDelivered");
-    await sendTemplateMessage(order.shippingPhone, templateName, TEMPLATE_LANGUAGE, [
+    const languageCode = await getTemplateLanguage();
+    await sendTemplateMessage(order.shippingPhone, templateName, languageCode, [
       {
         type: "body",
         parameters: [
@@ -387,7 +408,8 @@ async function sendTestWhatsappMessage(phoneNumber, event) {
     throw new Error(`Unknown event "${event}" — expected one of ${Object.keys(TEST_PARAMS_BY_EVENT).join(", ")}`);
   }
   const templateName = await getTemplateName(event);
-  return sendTemplateMessage(phoneNumber, templateName, TEMPLATE_LANGUAGE, [
+  const languageCode = await getTemplateLanguage();
+  return sendTemplateMessage(phoneNumber, templateName, languageCode, [
     { type: "body", parameters: params.map((text) => ({ type: "text", text })) },
   ]);
 }
@@ -492,6 +514,7 @@ module.exports = {
   getWebhookVerifyToken,
   getCredentials,
   getTemplateName,
+  getTemplateLanguage,
   sendTemplateMessage,
   sendOrderConfirmedWhatsApp,
   sendOrderDispatchedWhatsApp,
@@ -503,4 +526,5 @@ module.exports = {
   listTemplateStatuses,
   TEMPLATE_DRAFTS,
   DEFAULT_TEMPLATE_NAMES,
+  DEFAULT_TEMPLATE_LANGUAGE: TEMPLATE_LANGUAGE,
 };
