@@ -112,10 +112,25 @@ exports.sendTestWhatsappTemplate = asyncHandler(async (req, res) => {
     return sendError(res, `event must be one of: ${TESTABLE_WHATSAPP_EVENTS.join(", ")}`, 400);
   }
 
+  // Resolved BEFORE the send attempt and echoed back in both the success and
+  // failure message — added after a real back-and-forth debugging a 132001
+  // ("template doesn't exist in the translation") error where there was no
+  // way to tell, from the response alone, whether the name/language actually
+  // saved in Settings > Integrations > WhatsApp were the ones really used,
+  // or whether Render just hadn't redeployed that config-read code yet. Now
+  // the answer is always right there in the message, no more guessing.
+  const templateName = await whatsapp.getTemplateName(event);
+  const languageCode = await whatsapp.getTemplateLanguage();
+  const usedLabel = `template "${templateName}" (language "${languageCode}")`;
+
   try {
     await whatsapp.sendTestWhatsappMessage(phoneNumber, event);
-    return sendSuccess(res, {}, "Test message sent — check the WhatsApp number for delivery.");
+    return sendSuccess(
+      res,
+      { templateName, languageCode },
+      `Test message sent using ${usedLabel} — check the WhatsApp number for delivery.`,
+    );
   } catch (err) {
-    return sendError(res, err.message || "Test message failed to send", 400);
+    return sendError(res, `${err.message || "Test message failed to send"} — sent as ${usedLabel}`, 400);
   }
 });
